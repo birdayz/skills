@@ -24,6 +24,8 @@ claude plugin install image-generation@birdayz-skills
 
 Generate images with Google Gemini using reference images. Prevents hallucinations by grounding generation in actual visual references.
 
+The key idea: generation is driven by a markdown spec file (`*-prompt.md`), not chat prompts. When the AI needs to change something, it edits the spec. This is 100x more effective than wildly prompting in chat — you get reproducible, iteratable results.
+
 ```
 /generate-with-refs path/to/folder
 ```
