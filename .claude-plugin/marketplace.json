@@ -1,0 +1,30 @@
+{
+  "name": "birdayz-skills",
+  "owner": {
+    "name": "birdayz"
+  },
+  "metadata": {
+    "description": "Image generation and thumbnail creation skills for Claude Code",
+    "version": "1.0.0",
+    "homepage": "https://github.com/birdayz/skills"
+  },
+  "plugins": [
+    {
+      "name": "image-generation",
+      "description": "Generate images using Google Gemini with reference images and mandatory QA validation",
+      "source": "./",
+      "version": "1.0.0",
+      "category": "content-creation",
+      "keywords": [
+        "image-generation",
+        "gemini",
+        "thumbnail",
+        "reference-images",
+        "qa-validation"
+      ],
+      "skills": [
+        "./generate-with-refs"
+      ]
+    }
+  ]
+}
