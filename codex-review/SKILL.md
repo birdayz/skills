@@ -3,7 +3,7 @@ name: codex-review
 description: Kick off an external code review by OpenAI Codex (the `codex` CLI) on the current branch/PR, post it as a PR comment, and drive the fix→re-review loop. Use when the user asks for a "codex review", says "/codex-review", "kick off codex", or wants a second independent reviewer on a change. Repo-agnostic — works on any git repo with a GitHub PR.
 user-invocable: true
 allowed-tools: Bash, Read
-argument-hint: [--base <branch>] [focus instructions]
+argument-hint: "[--base <branch>] [focus instructions]"
 ---
 
 # Codex Review
