@@ -40,10 +40,10 @@ Requires `GEMINI_API_KEY` or `GOOGLE_API_KEY` env var and Go toolchain.
 
 Kick off an independent code review by **OpenAI Codex** (the `codex` CLI) on the current branch/PR, post it as a PR comment, and drive the fix→re-review loop. Repo-agnostic — works on any git repo with a GitHub PR.
 
-The key point: codex is **manual** — no bot or webhook runs it. The skill triggers it for you (`codex -s read-only -a never review --base <base>`), captures the review from stdout, and posts it with `gh` — so you never sit waiting for a review nobody started.
+The key point: codex is **manual** — no bot or webhook runs it. The skill triggers it for you (`codex -m gpt-5.5 -c model_reasoning_effort=xhigh -s read-only -a never review --base <base>` by default), captures the review from stdout, and posts it with `gh` — so you never sit waiting for a review nobody started.
 
 ```
-/codex-review [--base <branch>] [focus instructions]
+/codex-review [--base <branch>] [--model <model>] [--reasoning-effort <effort>] [focus instructions]
 ```
 
 Requires the `codex` CLI (logged in) and `gh`. See the [SKILL.md](codex-review/SKILL.md) for details.
