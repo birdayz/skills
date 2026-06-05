@@ -45,8 +45,17 @@ base=$(gh pr view --json baseRefName -q .baseRefName 2>/dev/null \
 start=$(date +%s)
 codex -m "$model" -c model_reasoning_effort="$reasoning_effort" -s read-only -a never review --base "$base" \
   > /tmp/codex-review.md 2> /tmp/codex-review.log
-echo "exit=$?  review lines=$(wc -l < /tmp/codex-review.md)"
+rc=$?
+echo "exit=$rc  review lines=$(wc -l < /tmp/codex-review.md)"
 dur=$(( $(date +%s) - start )); echo "$((dur/60))m$((dur%60))s" > /tmp/codex-duration.txt   # e.g. 2m21s
+# An empty review file is NOT a clean pass. codex can exit 0 with NO verdict when
+# it is rate-limited (5h/weekly quota), unauthenticated, or errored mid-run — the
+# cause is in the stderr log, never the (empty) stdout review. Always inspect:
+if [ "$rc" -ne 0 ] || [ ! -s /tmp/codex-review.md ]; then
+  echo "!! codex produced no review — scanning stderr for quota/auth/errors:"
+  grep -iE 'rate.?limit|quota|usage|429|too many|reached|not logged in|unauthor|stream error|error:' /tmp/codex-review.log | tail -20
+  echo "(full stderr at /tmp/codex-review.log; also try 'codex login status' and chatgpt.com/codex/settings/usage)"
+fi
 ```
 
 - `--model <model>` / `CODEX_REVIEW_MODEL` — Codex model to pass as `-m <model>`; default `gpt-5.5`.
@@ -54,8 +63,8 @@ dur=$(( $(date +%s) - start )); echo "$((dur/60))m$((dur%60))s" > /tmp/codex-dur
 - `-s read-only` — codex may read files and run git, but **never edits** the tree.
 - `-a never` — never block on an approval prompt: the run **can't hang** and **won't auto-post** (codex's GitHub-posting tool is approval-gated and is cleanly skipped under `never`), so you stay in control of what gets posted.
 - `--base <branch>` — review every commit on the branch since `<branch>`. For a **delta re-review** after addressing findings, pass the previously-reviewed SHA instead: `--base <prev-sha>` (reviews only the new commits — cheaper and focused).
-- `--commit <sha>` — review a single commit instead. NOTE: `--commit` **cannot** be combined with a custom `[PROMPT]`.
-- Optional custom focus (allowed with `--base`, not `--commit`): append a prompt, e.g. `... review --base "$base" "Focus on concurrency and error handling."` (pass the skill's `[focus instructions]` argument here).
+- `--commit <sha>` — review a single commit instead.
+- **A custom focus `[PROMPT]` is mutually exclusive with BOTH `--base` and `--commit`** in current codex: `codex review --base "$base" "Focus on X"` fails with `error: the argument '--base <BRANCH>' cannot be used with '[PROMPT]'` (same for `--commit`). A bare prompt (`codex review "Focus on X"`, or with `--uncommitted`) reviews the working-tree changes, NOT a branch/commit range. So for a PR/branch review you CANNOT steer with a focus prompt — run `--base "$base"` plain and rely on the diff itself (any findings docs, RFCs, or TODOs in the diff are visible to codex). If the skill was invoked with `[focus instructions]`, tell the user the focus can't be injected into a branch-scoped review and proceed with the plain `--base` review (or, only if the intent is the uncommitted working tree, drop `--base` and pass the prompt).
 
 **Output split:** the **final review prose is on stdout**; the full trace — tool calls, the diff, the model's reasoning — is on **stderr** (large). Read stdout for the verdict; dip into stderr only to see what codex actually inspected.
 
@@ -130,6 +139,8 @@ sed -n '1,80p' /tmp/codex-review.md   # read the verdict
 
 - **Don't wait for what you didn't trigger** — codex is manual; if a review is "expected", run it.
 - **Flag order**: `-m`, `-c model_reasoning_effort=...`, `-s`, and `-a` are top-level, *before* `review`; `--base`, `--commit`, and `--title` are review options after `review`. Placing global flags after `review` errors with "unexpected argument".
-- **`--commit` + custom prompt** is rejected by the arg parser — use `--base` if you need a prompt, or drop the prompt.
+- **Custom `[PROMPT]` + `--base`/`--commit`** is rejected by the arg parser (`'--base <BRANCH>' cannot be used with '[PROMPT]'`). A focus prompt only works on the working-tree scope (bare `review` / `--uncommitted`), never on a branch or commit range — for a PR review, drop the prompt and run `--base` plain.
+- **Need a *steered* analysis that `review` can't express** (e.g. "what test gaps remain on this branch?", a targeted audit — not a diff review)? Use `codex exec`, NOT `review`: `codex -s read-only -a never exec "PROMPT" < /dev/null > out 2> log`. The **`< /dev/null` is mandatory** in any non-interactive/background context — `codex exec` reads stdin to *append* to the prompt (per `--help`: "if stdin is piped and a prompt is also provided, stdin is appended as a `<stdin>` block"), so with stdin left open it prints `Reading additional input from stdin...` and **blocks forever, producing empty output**. (`-s`/`-a` are still top-level, before `exec`.)
+- **Empty review ≠ clean pass — it's usually a quota/auth failure.** codex exits **0 with no verdict** when the 5h or weekly rate limit is exhausted (it prints the limit interactively but not always to non-interactive stderr), when unauthenticated, or when it errors mid-run. A zero-length `/tmp/codex-review.md` is a FAILED run, never an ACK — scan the stderr log (`grep -iE 'rate.?limit|quota|usage|429|not logged in' /tmp/codex-review.log`), confirm with `codex login status`, and re-run after the quota resets. NEVER report "codex found nothing" off an empty file. (Both stdout and stderr are always redirected to files precisely so this is inspectable.)
 - **Clean tree first** — codex reads `git status`; stray edits widen or skew the review.
 - **Heading varies between passes** — if you ever scan for codex's own posted comments, its heading changes across passes (e.g. an initial review vs a re-review); match broadly, not on a fixed prefix.
