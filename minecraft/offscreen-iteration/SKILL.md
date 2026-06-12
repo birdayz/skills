@@ -114,6 +114,6 @@ A launch is the expensive unit (~1 min). Spend it well:
 - Batch: one launch serves many vantages (camera-cycling hook) + several asserts.
 - Run launches in the background; do other work; gate on log lines, not waiting.
 
-Worked example: the [`minecraft/`](../minecraft/README.md) skills used this harness to ship a
+Worked example: the [the sibling skills](../README.md) skills used this harness to ship a
 complete game mod — features verified by asserts, reviewed by two judge personas to 10/10 —
 with the user only ever seeing finished results.

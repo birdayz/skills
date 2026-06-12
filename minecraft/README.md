@@ -1,5 +1,9 @@
 # Minecraft mod-dev skills
 
+Foundation: [offscreen-iteration](offscreen-iteration/SKILL.md) — the generic unattended
+visual-iteration harness (virtual display, env-gated hooks, log-gated capture, LLM judges)
+that the three skills below build on.
+
 Three skills that let an LLM agent build, verify, and polish a Minecraft (NeoForge 26.1.x) mod
 **end to end without a human in the loop** — written while building `karoland`, a full theme-park
 mod shipped as a kid's birthday present. The recurring problem they solve: the agent can't see a
