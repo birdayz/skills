@@ -1,10 +1,6 @@
 # Minecraft mod-dev skills
 
-Foundation: [offscreen-iteration](offscreen-iteration/SKILL.md) — the generic unattended
-visual-iteration harness (virtual display, env-gated hooks, log-gated capture, LLM judges)
-that the three skills below build on.
-
-Three skills that let an LLM agent build, verify, and polish a Minecraft (NeoForge 26.1.x) mod
+Skills that let an LLM agent build, verify, and polish a Minecraft (NeoForge 26.1.x) mod
 **end to end without a human in the loop** — written while building `karoland`, a full theme-park
 mod shipped as a kid's birthday present. The recurring problem they solve: the agent can't see a
 game window, can't press keys, and a launch costs ~60s — so naive "edit, launch, ask the human to
@@ -32,19 +28,21 @@ atlases procedurally (Go), generate faces with an image model against reference 
 one "photo studio" launch: an env hook spawns the entity on a floating stage and auto-orbits the
 camera 360° while the agent captures stills — every angle, zero camera math, one launch.
 
-## [playtest](playtest/SKILL.md)
-Unattended QA with two layers:
+## [playtest-loop](playtest-loop/SKILL.md)
+The generic foundation the two skills above build on: unattended QA for any GUI software.
 
-1. **Functional asserts**: env-gated test hooks inside the mod (`KAROLAND_RINGTEST=1` etc.) that
-   drive a real headless client through a feature server-side and log one greppable `PASS`/`FAIL`
-   line — slide carries a rider to the pool at full health, minigame round pays out, rocket
-   launches and lands. CI-grade proof that gameplay *works*, not just compiles.
-2. **LLM-judge review loops**: capture screenshots from the headless harness, hand them to a
-   persona subagent with a rubric, and iterate until it scores 10/10. Two judges proved useful:
-   a kid-experience judge (catches "the last-collectible sadness spiral", unreadable signage,
-   drowning risk) and a domain-accuracy judge (scored a Falcon 9 replica 8/10 and demanded leg
-   deploy, real stage separation, and an LZ-1 divert before giving 10/10). The judge's blockers
-   become the next edit list; the loop terminates on a verifiable score.
+1. **The harness**: virtual display + software GL + env-gated self-driving hooks + log-gated
+   capture (bundled tools: `launch-offscreen.sh`, `capture.sh`, `keysend`).
+2. **Functional asserts**: env-gated test hooks inside the app that drive a real headless
+   session through a feature and log one greppable `PASS`/`FAIL` line — e.g. slide carries a
+   rider to the pool at full health, minigame round pays out, rocket launches and lands.
+   CI-grade proof that gameplay *works*, not just compiles.
+3. **LLM-judge review loops**: capture screenshots, hand them to a persona subagent with a
+   rubric, iterate until it scores 10/10. Two judges proved useful in practice: an end-user
+   judge (catches "the last-collectible sadness spiral", unreadable signage, frustration traps)
+   and a domain-accuracy judge (scored a Falcon 9 replica 8/10 and demanded leg deploy, real
+   stage separation, and an LZ-1 divert before giving 10/10). The judge's blockers become the
+   next edit list; the loop terminates on a verifiable score.
 
 The combination is the point: **asserts prove it works, captures prove it looks right, judges
 prove it's good** — and all three run without a human, so the agent can vibe-code for hours and

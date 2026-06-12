@@ -1,5 +1,5 @@
 ---
-name: offscreen-iteration
+name: playtest-loop
 description: Unattended visual iteration for GUI software — run the app on a virtual display the user never sees, capture screenshots/video the agent reads as images, drive scenarios via env-gated hooks, verify with greppable functional asserts, and gate quality with LLM-judge review loops. Use whenever you need to build/see/fix UI, game, or rendering work without a human watching the screen.
 ---
 
