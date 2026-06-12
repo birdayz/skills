@@ -113,3 +113,20 @@ vanished behind the counter with only the nameplate showing. Place custom NPCs i
 - Don't hand-author UVs (hdtexture.go owns them) or let Gemini draw onto atlas coordinates.
 - Don't drive animation off `ageInTicks` (client tracking age ≠ server clock).
 - Don't trust "it compiled" for merchant/interaction paths — write the functional assert.
+
+## Bundled reference tools (`tools/art-pipeline/`, relative to this skill)
+
+The three Go files the pipeline is built on, as working reference implementations from the
+karoland project — copy them into your project's art dir and adapt:
+
+- `preview.go` — THE iteration speedup: renders any JSON cube model + its atlas PNG to a
+  side/front/top/iso sheet with a UV overlay in ~1s. Run `go run preview.go` after every edit;
+  only launch the game for final verification. Adapt: the model-name list in `main()` and the
+  resources path constant.
+- `hdtexture.go` — atlas painter: bin-packs each cube's MC box-UV footprint, writes the UVs back
+  into the model JSON, and paints per-part materials + detail painters + Gemini face blits.
+  Adapt: the `classify(model, part)` palette switch and `process()` calls per model.
+- `genferris.go` — example of GENERATING geometry JSON procedurally (rings/helixes needing exact
+  rotations) instead of hand-authoring; verify with preview.go's SIDE view before wiring in-game.
+
+They read/write the shared model JSON format described above, so previewer output == game input.
