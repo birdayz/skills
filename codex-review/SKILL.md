@@ -149,6 +149,16 @@ gh pr comment "$pr" --body "$(printf '**Codex finished review%s** · `%s`\n\n---
 sed -n '1,80p' "$dir/review.md"   # read the verdict
 ```
 
+## Deep, background & nested-sandbox runs
+
+A full `xhigh` review is a long agent run. Three things decide whether a deep run comes back **complete** instead of looking truncated:
+
+- **Don't double-background.** Launch with *one* level of backgrounding — either your harness's background mode **or** `nohup … &`, never both. Doubling up makes the launching shell return instantly, so a "completed" signal fires while `codex` is still running detached; you then read a **mid-flight** log and mistake an unfinished run for an empty/failed one. Wait for the real process exit, then read the **tail** (the `ACK`/`NAK` + `tokens used` line), not a snapshot taken seconds in.
+
+- **Nested sandbox → use the bypass flag.** `-s read-only` sandboxes *every* command codex runs via `bwrap`, which **can't nest** inside another sandbox/agent (e.g. running codex from inside another coding agent): commands fail with `bwrap: Can't bind mount /oldroot/ on /newroot/`, starving the review of evidence — it still concludes, but on *less*, and can miss real findings. When the environment is already externally sandboxed, swap `-s read-only` for `--dangerously-bypass-approvals-and-sandbox` (its own help: "intended solely for running in environments that are externally sandboxed"). A review writes nothing, so there's no edit risk. In a plain human terminal, keep `-s read-only`.
+
+- **There is no "turn cap" — the context window is the only depth ceiling.** `codex exec`/`review` runs the agent loop until the model emits its final answer; there is no `max_turns` knob to raise. `xhigh` is already max reasoning depth and codex auto-compacts, so deep crawls normally survive. The only real terminal conditions are `ContextWindowExceeded`, `UsageLimitExceeded` (quota), and `ResponseTooManyFailedAttempts`. So a short/empty result is **never** "out of turns" — it's a premature read (above), a quota/auth failure (see Gotchas), or a context-window blowout on a huge audit; for the last, scope to fewer files or split into focused runs. There's no number to bump.
+
 ## Gotchas
 
 - **Don't wait for what you didn't trigger** — codex is manual; if a review is "expected", run it.
@@ -156,5 +166,6 @@ sed -n '1,80p' "$dir/review.md"   # read the verdict
 - **Custom `[PROMPT]` + `--base`/`--commit`** is rejected by the arg parser (`'--base <BRANCH>' cannot be used with '[PROMPT]'`). A focus prompt only works on the working-tree scope (bare `review` / `--uncommitted`), never on a branch or commit range — for a PR review, drop the prompt and run `--base` plain.
 - **Need a *steered* analysis that `review` can't express** (e.g. "what test gaps remain on this branch?", a targeted audit — not a diff review)? Use `codex exec`, NOT `review`: `codex -s read-only -a never exec "PROMPT" < /dev/null > out 2> log`. The **`< /dev/null` is mandatory** in any non-interactive/background context — `codex exec` reads stdin to *append* to the prompt (per `--help`: "if stdin is piped and a prompt is also provided, stdin is appended as a `<stdin>` block"), so with stdin left open it prints `Reading additional input from stdin...` and **blocks forever, producing empty output**. (`-s`/`-a` are still top-level, before `exec`.)
 - **Empty review ≠ clean pass — it's usually a quota/auth failure.** codex exits **0 with no verdict** when the 5h or weekly rate limit is exhausted (it prints the limit interactively but not always to non-interactive stderr), when unauthenticated, or when it errors mid-run. A zero-length `review.md` is a FAILED run, never an ACK — scan the stderr log (`grep -iE 'rate.?limit|quota|usage|429|not logged in' "$dir/review.log"`), confirm with `codex login status`, and re-run after the quota resets. NEVER report "codex found nothing" off an empty file. (Both stdout and stderr are always redirected to files precisely so this is inspectable.)
+- **A run that looks truncated is usually a mid-flight read, not a failure.** See *Deep, background & nested-sandbox runs* above: don't double-background (you'll read the log before codex finishes), and in a nested sandbox use `--dangerously-bypass-approvals-and-sandbox` so commands don't fail under `bwrap`. There is no turn cap to raise.
 - **Clean tree first** — codex reads `git status`; stray edits widen or skew the review.
 - **Heading varies between passes** — if you ever scan for codex's own posted comments, its heading changes across passes (e.g. an initial review vs a re-review); match broadly, not on a fixed prefix.
