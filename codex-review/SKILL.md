@@ -67,7 +67,7 @@ Defaults: `--model gpt-5.5`, `--effort xhigh`, `--timeout 25m`. Override with `-
 - `--base <branch|sha>` — review every commit since `<base>`. For a **delta re-review** after a fix, pass the previously-reviewed SHA: `--base <prev-sha>` (cheaper, focused).
 - `--commit <sha>` — review a single commit instead.
 - `--post` — render the comment from the Go template and post via `gh`. Omit it to only get the verdict locally (no PR needed).
-- `--update-last` — with `--post`, edit the tool's previous comment on the PR instead of adding a new one (re-reviews don't spam; posts fresh if none exists). Found via an invisible marker the tool appends, so it works even with a custom `--template`.
+- `--supersede` — with `--post`, post a **new** comment and **collapse** this tool's prior comments on the PR as "outdated" (GitHub's hide-as-outdated). A re-review loop then leaves one active comment with the earlier ones folded away — history preserved, no edit-in-place, no spam. Prior comments are found via an invisible marker the tool appends, so it works even with a custom `--template`. (`--update-last` is a deprecated alias.)
 - `--pr <n>` / `--repo owner/name` — post target (default: current branch's PR, repo inferred from cwd).
 - `--bypass-sandbox` — use `--dangerously-bypass-approvals-and-sandbox` instead of `-s read-only`. **Required when running inside another sandbox/agent** (codex's `bwrap` can't nest; without this it reviews on *less* evidence and can miss findings). A review writes nothing, so there's no edit risk. In a plain human terminal, omit it.
 - `--heartbeat <dur>` — interval for the stderr progress line (default `15s`; `0` disables). See **Watching progress** below.
@@ -112,7 +112,7 @@ If the skill was invoked with `[focus instructions]` for a **branch/PR** review,
 Read the verdict the tool printed (and `review.md`):
 
 - **ACK / no blocking issues** → done; report to the user.
-- **Findings / NAK** → treat each like any review finding: **reproduce it and judge its true severity first — don't trust a "minor / no bug" framing.** Fix the root cause, add a regression test that pins it (verify it fails *without* the fix), run the project's tests, commit. Then **re-review the delta**: `eval "$RUN" review --base <prev-sha> --post --update-last`. The `--update-last` edits the tool's previous comment instead of stacking a new one, so an N-round fix loop leaves ONE up-to-date codex comment, not N. Iterate until ACK on the current HEAD.
+- **Findings / NAK** → treat each like any review finding: **reproduce it and judge its true severity first — don't trust a "minor / no bug" framing.** Fix the root cause, add a regression test that pins it (verify it fails *without* the fix), run the project's tests, commit. Then **re-review the delta**: `eval "$RUN" review --base <prev-sha> --post --supersede`. `--supersede` posts a fresh comment and collapses the tool's earlier comments as "outdated", so an N-round fix loop shows the latest review on top with the prior ones folded away (history kept, not deleted, not edited-in-place). Iterate until ACK on the current HEAD.
 
 A codex ACK is only valid for the **exact HEAD it reviewed** — after any new commit, re-review (same SHA discipline as any reviewer).
 

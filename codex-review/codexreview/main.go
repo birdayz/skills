@@ -49,7 +49,7 @@ const defaultSkillURL = "https://github.com/birdayz/skills/tree/master/codex-rev
 
 // commentMarker is an invisible HTML comment appended to every posted comment so
 // re-reviews can find-and-update the tool's PRIOR comment instead of spamming the PR
-// (--update-last). It is template-independent (a custom --template still gets it).
+// (--supersede). It is template-independent (a custom --template still gets it).
 const commentMarker = "<!-- codexreview:marker -->"
 
 // commentTmpl is the PR-comment template — the same shape the skill documents, but
@@ -81,25 +81,25 @@ var (
 )
 
 type config struct {
-	mode       string // "review" | "exec"
-	base       string
-	commit     string
-	prompt     string
-	model      string
-	effort     string
-	timeout    time.Duration
-	post       bool
-	updateLast bool
-	pr         string
-	repo       string
-	bypass     bool
-	skillURL   string
-	dir        string
-	tmplFile   string
-	codexBin   string
-	ghBin      string
-	verbose    bool
-	heartbeat  time.Duration
+	mode      string // "review" | "exec"
+	base      string
+	commit    string
+	prompt    string
+	model     string
+	effort    string
+	timeout   time.Duration
+	post      bool
+	supersede bool
+	pr        string
+	repo      string
+	bypass    bool
+	skillURL  string
+	dir       string
+	tmplFile  string
+	codexBin  string
+	ghBin     string
+	verbose   bool
+	heartbeat time.Duration
 }
 
 func main() {
@@ -158,7 +158,8 @@ func parseFlags(mode string, args []string) config {
 	fs.StringVar(&cfg.effort, "effort", env("CODEX_REVIEW_REASONING_EFFORT", "xhigh"), "reasoning effort (-c model_reasoning_effort=)")
 	fs.DurationVar(&cfg.timeout, "timeout", 25*time.Minute, "hard wall-clock cap; the run is killed (process group) if exceeded")
 	fs.BoolVar(&cfg.post, "post", false, "post the review as a PR comment via gh")
-	fs.BoolVar(&cfg.updateLast, "update-last", false, "with --post: edit this tool's PREVIOUS comment on the PR instead of adding a new one (re-reviews don't spam); posts new if none exists")
+	fs.BoolVar(&cfg.supersede, "supersede", false, "with --post: post a NEW comment and COLLAPSE this tool's prior comments on the PR as 'outdated' (re-reviews keep one active comment + a folded history, no edit-in-place, no spam)")
+	fs.BoolVar(&cfg.supersede, "update-last", false, "deprecated alias for --supersede")
 	fs.StringVar(&cfg.pr, "pr", "", "PR number to post to (default: the current branch's PR)")
 	fs.StringVar(&cfg.repo, "repo", "", "owner/name for gh (default: inferred from cwd)")
 	fs.BoolVar(&cfg.bypass, "bypass-sandbox", false, "use --dangerously-bypass-approvals-and-sandbox instead of -s read-only (REQUIRED inside a nested sandbox/agent where bwrap can't nest; review writes nothing, so no edit risk)")
@@ -188,7 +189,7 @@ usage:
   codexreview exec   --prompt "<steer>"                    [flags]    steered analysis (review can't take a prompt)
 
 common flags (full list: `+"`codexreview review -h`"+` / `+"`codexreview exec -h`"+`):
-  --post                post the result as a PR comment via gh (--update-last edits the prior one)
+  --post                post the result as a PR comment via gh (--supersede collapses prior ones)
   --model   gpt-5.5     codex model           (env CODEX_REVIEW_MODEL)
   --effort  xhigh       reasoning effort      (env CODEX_REVIEW_REASONING_EFFORT)
   --timeout 25m         hard cap; a stuck run is process-group-killed (no external `+"`timeout`"+` needed)
@@ -447,20 +448,20 @@ func postComment(ctx context.Context, cfg config, res result) (string, error) {
 		return "", err
 	}
 
-	// --update-last: edit this tool's previous comment instead of adding a new one.
-	// Any failure here falls through to posting a fresh comment (never blocks posting).
-	if cfg.updateLast {
+	// --supersede: collapse this tool's PRIOR comments as "outdated" (GitHub's
+	// minimizeComment) BEFORE posting the fresh one. A re-review loop then shows ONE
+	// active comment with the earlier ones folded away — preserving history (no
+	// edit-in-place) without spamming N expanded comments. Best-effort: a collapse
+	// failure (auth/scope) never blocks the new comment.
+	collapsed := 0
+	if cfg.supersede {
 		if slug, err := ghJSON(ctx, cfg, "repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"); err == nil && slug != "" {
 			pr := cfg.pr
 			if pr == "" {
 				pr, _ = ghJSON(ctx, cfg, "pr", "view", "--json", "number", "-q", ".number")
 			}
 			if pr != "" {
-				if id, _ := findLastComment(ctx, cfg, slug, pr); id != "" {
-					if url, err := editComment(ctx, cfg, slug, id, body); err == nil {
-						return url + " (updated previous)", nil
-					}
-				}
+				collapsed, _ = minimizePriorComments(ctx, cfg, slug, pr)
 			}
 		}
 	}
@@ -480,32 +481,42 @@ func postComment(ctx context.Context, cfg config, res result) (string, error) {
 	if err := cmd.Run(); err != nil {
 		return "", fmt.Errorf("gh %s: %w\n%s", strings.Join(args, " "), err, errb.String())
 	}
-	return strings.TrimSpace(out.String()), nil
+	url := strings.TrimSpace(out.String())
+	if collapsed > 0 {
+		url += fmt.Sprintf(" (collapsed %d prior)", collapsed)
+	}
+	return url, nil
 }
 
-// findLastComment returns the numeric id of the most recent issue comment on the PR
-// that carries the tool's marker, or "" if none.
-func findLastComment(ctx context.Context, cfg config, slug, pr string) (string, error) {
-	jq := fmt.Sprintf(`[.[] | select(.body | contains(%q)) | .id] | last // empty`, commentMarker)
+// minimizePriorComments collapses every issue comment on the PR that carries this
+// tool's marker as "outdated" (GitHub's hide-as-outdated), returning how many it
+// collapsed. minimizeComment is idempotent, so re-running over already-collapsed
+// comments is harmless.
+func minimizePriorComments(ctx context.Context, cfg config, slug, pr string) (int, error) {
+	// minimizeComment is a GraphQL mutation keyed by the comment's NODE id, so select
+	// node_id (not the REST numeric id) of every marker-bearing comment.
+	jq := fmt.Sprintf(`.[] | select(.body | contains(%q)) | .node_id`, commentMarker)
 	out, err := exec.CommandContext(ctx, cfg.ghBin, "api", "--paginate",
 		fmt.Sprintf("repos/%s/issues/%s/comments", slug, pr), "--jq", jq).Output()
-	return strings.TrimSpace(string(out)), err
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	for _, nodeID := range strings.Fields(string(out)) {
+		if err := minimizeComment(ctx, cfg, nodeID); err == nil {
+			n++
+		}
+	}
+	return n, nil
 }
 
-// editComment PATCHes an existing issue comment body and returns its html_url.
-func editComment(ctx context.Context, cfg config, slug, id, body string) (string, error) {
-	payload, err := json.Marshal(map[string]string{"body": body})
-	if err != nil {
-		return "", err
-	}
-	cmd := exec.CommandContext(ctx, cfg.ghBin, "api", "--method", "PATCH",
-		fmt.Sprintf("repos/%s/issues/comments/%s", slug, id), "--input", "-", "--jq", ".html_url")
-	cmd.Stdin = bytes.NewReader(payload)
-	out, err := cmd.Output()
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(string(out)), nil
+// minimizeComment hides a single comment as OUTDATED via the GraphQL minimizeComment
+// mutation (the REST API has no collapse endpoint). Idempotent on an already-minimized
+// comment.
+func minimizeComment(ctx context.Context, cfg config, nodeID string) error {
+	const q = `mutation($id:ID!){minimizeComment(input:{subjectId:$id,classifier:OUTDATED}){minimizedComment{isMinimized}}}`
+	cmd := exec.CommandContext(ctx, cfg.ghBin, "api", "graphql", "-f", "query="+q, "-f", "id="+nodeID)
+	return cmd.Run()
 }
 
 // ghJSON runs a gh command and returns trimmed stdout (used for tiny -q scalars).
@@ -558,7 +569,7 @@ func renderComment(cfg config, res result) (string, error) {
 	if err := t.Execute(&buf, data); err != nil {
 		return "", fmt.Errorf("execute comment template: %w", err)
 	}
-	// Append the invisible marker (template-independent) so --update-last can find
+	// Append the invisible marker (template-independent) so --supersede can find
 	// this comment on a later re-review.
 	return buf.String() + "\n\n" + commentMarker, nil
 }
