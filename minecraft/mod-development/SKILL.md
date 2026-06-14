@@ -11,7 +11,7 @@ are illustrative; substitute your own.
 
 ## TL;DR golden rules
 1. **Iterate in unit tests, not the game.** Launching + driving the client is ~60s/cycle. Put all pure logic in MC-free classes (geometry, state machines, math) and test with `./gradlew :<mod>:test` (seconds).
-1b. **For VISUAL work, iterate fully AUTONOMOUSLY via the headless offscreen harness** (Xvfb + software GL + an env-gated auto-demo + ffmpeg → GIF/PNG you can Read). See "Headless OFFSCREEN capture" below, and the `playtest-loop` skill for the generic harness. This renders + records WITHOUT ever showing on the user's screen — so you can build→see→fix on your own (no need for the user to launch/watch), and it can't spoil a surprise.
+1b. **For VISUAL work, iterate fully AUTONOMOUSLY via the headless offscreen harness** (Xvfb + software GL + an env-gated auto-demo + ffmpeg → GIF/PNG you can Read). See "Headless OFFSCREEN capture" below, and the `playtest-loop` skill for the full offscreen mod-dev harness. This renders + records WITHOUT ever showing on the user's screen — so you can build→see→fix on your own (no need for the user to launch/watch), and it can't spoil a surprise.
 2. **Look up the real API in the decompiled sources** (see below) — don't guess. MC 26.1.x renamed a lot.
 3. **A player riding a vanilla minecart is simulated client-side** — server `setPos`/velocity is ignored for the rider UNLESS the world has the *Minecart Improvements* experiment (then carts are server-authoritative). See the movement section.
 4. **Commit at checkpoints.** Branch off `main` first.
@@ -226,7 +226,7 @@ There is often **no `wtype`/`ydotool`** installed and **Wayland has no targeted-
 The single most valuable trick: render + record the game on a **virtual display** so it NEVER appears
 on the user's monitor (essential when the work is a surprise, or you just don't want a window
 stealing focus). Spoiler-proof by construction — worst case is a crash, never a Minecraft window
-popping up where it can be seen. This is the MC-specific instance of the generic `playtest-loop` harness.
+popping up where it can be seen. This section is a quick start; the `playtest-loop` skill is the full harness.
 
 **How it works (4 parts):**
 1. **Virtual display (Xvfb)** — an in-memory X11 screen, no monitor:

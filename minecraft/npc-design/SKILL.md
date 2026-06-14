@@ -8,7 +8,7 @@ description: Offline-first pipeline for designing a custom NPC/character entity 
 The loop, proven on a custom vendor NPC: **offline model iteration → reviewer 10/10 → code wiring →
 in-game proof**. Total game launches needed: ~3 (verification only). Never iterate geometry or
 textures in-game — preview renders take ~1s, a launch takes ~4 min. This builds on the
-`playtest-loop` skill (the generic unattended-iteration harness) and uses the
+`playtest-loop` skill (the offscreen mod-dev iteration harness) and uses the
 `image-generation:generate-with-refs` skill for face art.
 
 ## Phase 1 — model + texture, fully offline

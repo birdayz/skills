@@ -41,20 +41,21 @@
       ]
     },
     {
-      "name": "playtest-loop",
-      "description": "Unattended visual iteration for GUI software: render on a virtual display, capture screenshots the agent reads, drive via env-gated hooks, verify with functional asserts, gate quality with LLM-judge loops",
+      "name": "minecraft-playtest-loop",
+      "description": "Unattended visual iteration for Minecraft mod development: render the dev client/server on a virtual display, capture screenshots the agent reads, drive the game via env-gated demo hooks, verify with functional asserts, gate quality with LLM-judge loops. The offscreen foundation mod-development and npc-design build on",
       "source": "./",
       "category": "developer-tools",
       "keywords": [
-        "testing",
-        "screenshots",
+        "minecraft",
+        "neoforge",
+        "modding",
         "headless",
-        "gui",
+        "screenshots",
         "llm-judge",
         "xvfb"
       ],
       "skills": [
-        "./playtest-loop"
+        "./minecraft/playtest-loop"
       ]
     },
     {

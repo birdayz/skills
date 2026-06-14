@@ -6,9 +6,13 @@ unattended. The recurring problem they solve: the agent can't see a game window,
 and a launch costs ~60s — so naive "edit, launch, ask the human to look" iteration is hopeless.
 These skills replace the human's eyes and hands.
 
-They build on the repo-root [`playtest-loop`](../playtest-loop/SKILL.md) skill — the generic
-unattended visual-iteration harness (virtual display + self-driving hooks + functional asserts +
-LLM-judge loops). The two skills here apply that loop to Minecraft modding.
+## [minecraft-playtest-loop](playtest-loop/SKILL.md)
+The offscreen foundation the other two build on: unattended visual iteration for mod dev. Render the
+dev client/server on a virtual display nobody sees (Xvfb + `llvmpipe` software GL), drive the game via
+env-gated demo hooks compiled into the mod, gate captures on the MC log, prove gameplay with greppable
+functional asserts, and gate looks with LLM-judge review loops. Bundled tools:
+[`playtest-loop/tools`](playtest-loop/tools/) — `launch-offscreen.sh`, `capture.sh`, and a
+dependency-free Go `keysend` uinput injector.
 
 ## [minecraft-mod-development](mod-development/SKILL.md)
 The base loop for NeoForge mod work. Three rules that make agent-driven mod work fast and verifiable:
