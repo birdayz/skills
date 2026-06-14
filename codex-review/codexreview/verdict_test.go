@@ -1,6 +1,52 @@
 package main
 
-import "testing"
+import (
+	"slices"
+	"testing"
+)
+
+// TestCodexArgs_BypassExcludesApprovalFlag pins the codex CLI rule that
+// --dangerously-bypass-approvals-and-sandbox MUST NOT be combined with
+// -a/--ask-for-approval (codex errors "cannot be used with '--ask-for-approval'").
+// The bypass path is exactly what a NESTED agent uses, so getting it wrong breaks the
+// most common in-sandbox invocation — as it did until this was fixed.
+func TestCodexArgs_BypassExcludesApprovalFlag(t *testing.T) {
+	bypass := codexArgs(config{mode: "review", base: "main", bypass: true}, "/tmp/x")
+	if !slices.Contains(bypass, "--dangerously-bypass-approvals-and-sandbox") {
+		t.Fatalf("bypass args missing the bypass flag: %v", bypass)
+	}
+	if slices.Contains(bypass, "-a") {
+		t.Fatalf("bypass args include -a/--ask-for-approval, which codex rejects alongside --dangerously-bypass-…: %v", bypass)
+	}
+	if slices.Contains(bypass, "-s") {
+		t.Fatalf("bypass args include -s sandbox flag, redundant with the bypass: %v", bypass)
+	}
+
+	// The sandboxed (default) path MUST keep -s read-only AND -a never.
+	sandboxed := codexArgs(config{mode: "review", base: "main", bypass: false}, "/tmp/x")
+	if !slices.Contains(sandboxed, "-a") || !slices.Contains(sandboxed, "never") {
+		t.Fatalf("sandboxed args dropped -a never: %v", sandboxed)
+	}
+	if i := slices.Index(sandboxed, "-s"); i < 0 || sandboxed[i+1] != "read-only" {
+		t.Fatalf("sandboxed args missing -s read-only: %v", sandboxed)
+	}
+
+	// exec mode carries --json + -o <lastMsg> and the prompt last.
+	ex := codexArgs(config{mode: "exec", prompt: "do X", bypass: false}, "/tmp/last.txt")
+	if !slices.Contains(ex, "--json") || !slices.Contains(ex, "-o") {
+		t.Fatalf("exec args missing --json/-o: %v", ex)
+	}
+	if ex[len(ex)-1] != "do X" {
+		t.Fatalf("exec prompt must be the final arg, got %q in %v", ex[len(ex)-1], ex)
+	}
+	if i := slices.Index(ex, "-o"); i < 0 || ex[i+1] != "/tmp/last.txt" {
+		t.Fatalf("exec -o must point at lastMsgPath: %v", ex)
+	}
+	// Global flags must precede the subcommand (codex requires this ordering).
+	if slices.Index(ex, "exec") < slices.Index(ex, "-m") {
+		t.Fatalf("subcommand must come after global flags: %v", ex)
+	}
+}
 
 func TestClassifyVerdict(t *testing.T) {
 	cases := []struct {

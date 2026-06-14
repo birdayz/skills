@@ -379,7 +379,11 @@ func run(ctx context.Context, cfg config) (result, error) {
 }
 
 // codexArgs builds the codex argv with the REQUIRED flag ordering: global flags
-// (-m, -c, -s|--bypass, -a) BEFORE the subcommand; subcommand options after.
+// (-m, -c, -s|--bypass[, -a]) BEFORE the subcommand; subcommand options after.
+//
+// --dangerously-bypass-approvals-and-sandbox ALREADY disables both approvals and the
+// sandbox; codex REJECTS combining it with -a/--ask-for-approval ("cannot be used with
+// '--ask-for-approval'"). So -a never is added ONLY on the sandboxed (-s read-only) path.
 //
 // exec runs with `--json` (so we parse the turn/usage event stream for live metrics)
 // and `-o lastMsgPath` (so the final agent message lands in a file as clean prose —
@@ -390,9 +394,8 @@ func codexArgs(cfg config, lastMsgPath string) []string {
 	if cfg.bypass {
 		args = append(args, "--dangerously-bypass-approvals-and-sandbox")
 	} else {
-		args = append(args, "-s", "read-only")
+		args = append(args, "-s", "read-only", "-a", "never")
 	}
-	args = append(args, "-a", "never")
 	switch cfg.mode {
 	case "review":
 		args = append(args, "review")
