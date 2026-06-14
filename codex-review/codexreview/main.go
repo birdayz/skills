@@ -20,6 +20,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -36,6 +37,11 @@ import (
 
 const defaultSkillURL = "https://github.com/birdayz/skills/tree/master/codex-review"
 
+// commentMarker is an invisible HTML comment appended to every posted comment so
+// re-reviews can find-and-update the tool's PRIOR comment instead of spamming the PR
+// (--update-last). It is template-independent (a custom --template still gets it).
+const commentMarker = "<!-- codexreview:marker -->"
+
 // commentTmpl is the PR-comment template — the same shape the skill documents, but
 // rendered from data instead of an unquoted printf. Kept overridable via --template.
 const commentTmpl = "**Codex {{.Kind}}{{with .Duration}} in {{.}}{{end}}** · `{{.SHA}}`\n\n" +
@@ -47,26 +53,37 @@ const commentTmpl = "**Codex {{.Kind}}{{with .Duration}} in {{.}}{{end}}** · `{
 // mid-stream. An empty review is NEVER a clean pass.
 var quotaRE = regexp.MustCompile(`(?i)rate.?limit|quota|usage limit|429|too many|reached|not logged in|unauthor|stream error|error:|ContextWindowExceeded|UsageLimitExceeded`)
 
-// verdictRE pulls a trailing ACK / NAK / LGTM verdict out of the review prose.
-var verdictRE = regexp.MustCompile(`(?i)\b(ACK|NAK|LGTM)\b`)
+// verdictLineRE matches a VERDICT LINE — a line whose first word (after optional
+// markdown bullets / emphasis / quote markers) is ACK / NAK / LGTM. Anchored to the
+// line start so a verdict word buried mid-prose ("this isn't a clean ACK", "would
+// NAK if…") does NOT count. Code spans are stripped before matching (stripCode).
+var verdictLineRE = regexp.MustCompile(`(?im)^[\s>*_#-]*(ACK|NAK|LGTM)\b`)
+
+// fencedRE / inlineCodeRE strip fenced blocks and inline-code spans so a verdict
+// word quoted inside code can never be read as the reviewer's verdict.
+var (
+	fencedRE     = regexp.MustCompile("(?s)```.*?```")
+	inlineCodeRE = regexp.MustCompile("`[^`]*`")
+)
 
 type config struct {
-	mode     string // "review" | "exec"
-	base     string
-	commit   string
-	prompt   string
-	model    string
-	effort   string
-	timeout  time.Duration
-	post     bool
-	pr       string
-	repo     string
-	bypass   bool
-	skillURL string
-	dir      string
-	tmplFile string
-	codexBin string
-	ghBin    string
+	mode       string // "review" | "exec"
+	base       string
+	commit     string
+	prompt     string
+	model      string
+	effort     string
+	timeout    time.Duration
+	post       bool
+	updateLast bool
+	pr         string
+	repo       string
+	bypass     bool
+	skillURL   string
+	dir        string
+	tmplFile   string
+	codexBin   string
+	ghBin      string
 }
 
 func main() {
@@ -107,6 +124,7 @@ func parseFlags(mode string, args []string) config {
 	fs.StringVar(&cfg.effort, "effort", env("CODEX_REVIEW_REASONING_EFFORT", "xhigh"), "reasoning effort (-c model_reasoning_effort=)")
 	fs.DurationVar(&cfg.timeout, "timeout", 25*time.Minute, "hard wall-clock cap; the run is killed (process group) if exceeded")
 	fs.BoolVar(&cfg.post, "post", false, "post the review as a PR comment via gh")
+	fs.BoolVar(&cfg.updateLast, "update-last", false, "with --post: edit this tool's PREVIOUS comment on the PR instead of adding a new one (re-reviews don't spam); posts new if none exists")
 	fs.StringVar(&cfg.pr, "pr", "", "PR number to post to (default: the current branch's PR)")
 	fs.StringVar(&cfg.repo, "repo", "", "owner/name for gh (default: inferred from cwd)")
 	fs.BoolVar(&cfg.bypass, "bypass-sandbox", false, "use --dangerously-bypass-approvals-and-sandbox instead of -s read-only (for NESTED sandboxes where bwrap can't nest; review writes nothing, so no edit risk)")
@@ -163,18 +181,27 @@ func run(ctx context.Context, cfg config) (result, error) {
 	// Stdin == nil → /dev/null: this is the WHOLE POINT — `codex exec` hangs forever
 	// reading an open stdin. Never connect a terminal/pipe here.
 	cmd.Stdin = nil
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+	// Cap captured output: a runaway codex/quota dump must not grow memory unbounded.
+	// A real review is a few KB; 8 MB each is a generous ceiling.
+	stdout := &capBuffer{max: 8 << 20}
+	stderr := &capBuffer{max: 8 << 20}
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
 	// New process group so the timeout/interrupt kills codex AND its bwrap/sandbox
 	// children, not just the parent.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error {
-		if cmd.Process != nil {
-			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		if cmd.Process == nil {
+			return nil
 		}
+		// Kill the whole group (codex + its bwrap sandbox children); the negative pid
+		// targets the group leader's group. Fall back to killing the process directly.
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 		return cmd.Process.Kill()
 	}
+	// Backstop: if Cancel's kill races a child that hasn't reparented, don't block
+	// forever in Wait — force-return shortly after.
+	cmd.WaitDelay = 10 * time.Second
 
 	start := time.Now()
 	runErr := cmd.Run()
@@ -250,26 +277,31 @@ func codexArgs(cfg config) []string {
 	return args
 }
 
+// classifyVerdict extracts the ACK/NAK/LGTM verdict. It scans VERDICT LINES (not
+// mid-prose mentions, not code spans) and applies NAK PRECEDENCE: if a blocking NAK
+// appears anywhere, the verdict is NAK even when an ACK line is also present (e.g.
+// "ACK for the docs … NAK on the code") — a blocking finding must never be masked by
+// a co-occurring ACK. Returns UNKNOWN (never a guessed ACK) when no verdict line is
+// found — the safe default is "make the human read the prose", not a false pass.
 func classifyVerdict(review string) string {
-	// Look at the last ~600 chars where the verdict lives.
-	tailText := review
-	if len(tailText) > 600 {
-		tailText = tailText[len(tailText)-600:]
+	clean := inlineCodeRE.ReplaceAllString(fencedRE.ReplaceAllString(review, ""), "")
+	var sawACK, sawNAK bool
+	for _, m := range verdictLineRE.FindAllStringSubmatch(clean, -1) {
+		switch strings.ToUpper(m[1]) {
+		case "NAK":
+			sawNAK = true
+		case "ACK", "LGTM":
+			sawACK = true
+		}
 	}
-	switch strings.ToUpper(verdictRE.FindString(tailText)) {
-	case "NAK":
+	switch {
+	case sawNAK:
 		return "NAK"
-	case "ACK", "LGTM":
+	case sawACK:
 		return "ACK"
+	default:
+		return "UNKNOWN (no ACK/NAK verdict line — read the prose)"
 	}
-	// Fall back to a full-text scan (some reviews put the verdict mid-prose).
-	switch strings.ToUpper(verdictRE.FindString(review)) {
-	case "NAK":
-		return "NAK"
-	case "ACK", "LGTM":
-		return "ACK"
-	}
-	return "UNKNOWN (no ACK/NAK found — read the prose)"
 }
 
 func postComment(ctx context.Context, cfg config, res result) (string, error) {
@@ -280,6 +312,25 @@ func postComment(ctx context.Context, cfg config, res result) (string, error) {
 	if err != nil {
 		return "", err
 	}
+
+	// --update-last: edit this tool's previous comment instead of adding a new one.
+	// Any failure here falls through to posting a fresh comment (never blocks posting).
+	if cfg.updateLast {
+		if slug, err := ghJSON(ctx, cfg, "repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"); err == nil && slug != "" {
+			pr := cfg.pr
+			if pr == "" {
+				pr, _ = ghJSON(ctx, cfg, "pr", "view", "--json", "number", "-q", ".number")
+			}
+			if pr != "" {
+				if id, _ := findLastComment(ctx, cfg, slug, pr); id != "" {
+					if url, err := editComment(ctx, cfg, slug, id, body); err == nil {
+						return url + " (updated previous)", nil
+					}
+				}
+			}
+		}
+	}
+
 	args := []string{"pr", "comment"}
 	if cfg.pr != "" {
 		args = append(args, cfg.pr)
@@ -296,6 +347,40 @@ func postComment(ctx context.Context, cfg config, res result) (string, error) {
 		return "", fmt.Errorf("gh %s: %w\n%s", strings.Join(args, " "), err, errb.String())
 	}
 	return strings.TrimSpace(out.String()), nil
+}
+
+// findLastComment returns the numeric id of the most recent issue comment on the PR
+// that carries the tool's marker, or "" if none.
+func findLastComment(ctx context.Context, cfg config, slug, pr string) (string, error) {
+	jq := fmt.Sprintf(`[.[] | select(.body | contains(%q)) | .id] | last // empty`, commentMarker)
+	out, err := exec.CommandContext(ctx, cfg.ghBin, "api", "--paginate",
+		fmt.Sprintf("repos/%s/issues/%s/comments", slug, pr), "--jq", jq).Output()
+	return strings.TrimSpace(string(out)), err
+}
+
+// editComment PATCHes an existing issue comment body and returns its html_url.
+func editComment(ctx context.Context, cfg config, slug, id, body string) (string, error) {
+	payload, err := json.Marshal(map[string]string{"body": body})
+	if err != nil {
+		return "", err
+	}
+	cmd := exec.CommandContext(ctx, cfg.ghBin, "api", "--method", "PATCH",
+		fmt.Sprintf("repos/%s/issues/comments/%s", slug, id), "--input", "-", "--jq", ".html_url")
+	cmd.Stdin = bytes.NewReader(payload)
+	out, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+// ghJSON runs a gh command and returns trimmed stdout (used for tiny -q scalars).
+func ghJSON(ctx context.Context, cfg config, args ...string) (string, error) {
+	if cfg.repo != "" && (len(args) > 0 && args[0] != "api") {
+		args = append(args, "--repo", cfg.repo)
+	}
+	out, err := exec.CommandContext(ctx, cfg.ghBin, args...).Output()
+	return strings.TrimSpace(string(out)), err
 }
 
 type commentData struct {
@@ -333,8 +418,31 @@ func renderComment(cfg config, res result) (string, error) {
 	if err := t.Execute(&buf, data); err != nil {
 		return "", fmt.Errorf("execute comment template: %w", err)
 	}
-	return buf.String(), nil
+	// Append the invisible marker (template-independent) so --update-last can find
+	// this comment on a later re-review.
+	return buf.String() + "\n\n" + commentMarker, nil
 }
+
+// capBuffer is an io.Writer that retains at most max bytes (the first max) but
+// reports every write as fully consumed, so a child writing past the cap is never
+// blocked on backpressure — it just stops being recorded past the ceiling.
+type capBuffer struct {
+	buf bytes.Buffer
+	max int
+}
+
+func (c *capBuffer) Write(p []byte) (int, error) {
+	if room := c.max - c.buf.Len(); room > 0 {
+		if room > len(p) {
+			room = len(p)
+		}
+		c.buf.Write(p[:room])
+	}
+	return len(p), nil
+}
+
+func (c *capBuffer) Bytes() []byte  { return c.buf.Bytes() }
+func (c *capBuffer) String() string { return c.buf.String() }
 
 // --- small helpers (git/codex/util) ---
 
@@ -349,12 +457,13 @@ func scratchDir() (string, error) {
 		tmp = "/tmp"
 	}
 	safe := regexp.MustCompile(`[^A-Za-z0-9._-]`).ReplaceAllString(br, "_")
-	// cksum-style stable key off the repo path so concurrent reviews never clash.
-	key := fmt.Sprintf("%08x", crc(top))
+	// Stable per-repo key (FNV-1a of the repo path) so concurrent reviews of
+	// different repos/branches never clash on the scratch dir.
+	key := fmt.Sprintf("%08x", fnv1a(top))
 	return filepath.Join(tmp, "codex-review", key+"-"+safe), nil
 }
 
-func crc(s string) uint32 {
+func fnv1a(s string) uint32 {
 	var h uint32 = 2166136261
 	for i := 0; i < len(s); i++ {
 		h ^= uint32(s[i])

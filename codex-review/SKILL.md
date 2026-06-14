@@ -25,15 +25,20 @@ A codex review only happens because **someone ran `codex`**. There is no bot, we
 
 ## Step 0 — build the tool (once)
 
-The tool is Go source next to this SKILL.md. Build it once to a stable path and reuse:
+The tool is Go source in `codexreview/` **next to this SKILL.md**. Use the absolute
+path of THIS skill's directory (you were given it when the skill loaded — do not try
+to derive it from `$0`/`readlink`; that's the shell, not the file). Build once to a
+stable path and verify the build before relying on it:
 
 ```bash
-SKILL_DIR="$(dirname "$(readlink -f "$0" 2>/dev/null || echo .)")"   # or the dir this SKILL.md lives in
-# When you know the skill dir, just point at codexreview/ inside it:
-go build -o /tmp/codexreview "<skill-dir>/codexreview" && echo "built /tmp/codexreview"
+SKILL_DIR="/abs/path/to/this/skill"     # the directory this SKILL.md lives in
+go build -o /tmp/codexreview "$SKILL_DIR/codexreview" \
+  && /tmp/codexreview 2>&1 | grep -q 'usage:' \
+  && echo "built + sane: /tmp/codexreview" \
+  || { echo "BUILD FAILED — fix codexreview/ before reviewing"; exit 1; }
 ```
 
-(`go run "<skill-dir>/codexreview" …` also works and skips the build step.) The tool has no third-party dependencies, so the build is offline and instant.
+The tool has no third-party dependencies — the build is offline and instant. (`go run "$SKILL_DIR/codexreview" …` also works and skips the explicit build.)
 
 ## Step 1 — run the review
 
@@ -54,6 +59,7 @@ Defaults: `--model gpt-5.5`, `--effort xhigh`, `--timeout 25m`. Override with `-
 - `--base <branch|sha>` — review every commit since `<base>`. For a **delta re-review** after a fix, pass the previously-reviewed SHA: `--base <prev-sha>` (cheaper, focused).
 - `--commit <sha>` — review a single commit instead.
 - `--post` — render the comment from the Go template and post via `gh`. Omit it to only get the verdict locally (no PR needed).
+- `--update-last` — with `--post`, edit the tool's previous comment on the PR instead of adding a new one (re-reviews don't spam; posts fresh if none exists). Found via an invisible marker the tool appends, so it works even with a custom `--template`.
 - `--pr <n>` / `--repo owner/name` — post target (default: current branch's PR, repo inferred from cwd).
 - `--bypass-sandbox` — use `--dangerously-bypass-approvals-and-sandbox` instead of `-s read-only`. **Required when running inside another sandbox/agent** (codex's `bwrap` can't nest; without this it reviews on *less* evidence and can miss findings). A review writes nothing, so there's no edit risk. In a plain human terminal, omit it.
 
@@ -74,7 +80,7 @@ If the skill was invoked with `[focus instructions]` for a **branch/PR** review,
 Read the verdict the tool printed (and `review.md`):
 
 - **ACK / no blocking issues** → done; report to the user.
-- **Findings / NAK** → treat each like any review finding: **reproduce it and judge its true severity first — don't trust a "minor / no bug" framing.** Fix the root cause, add a regression test that pins it (verify it fails *without* the fix), run the project's tests, commit. Then **re-review the delta**: `/tmp/codexreview review --base <prev-sha> --post`. Iterate until ACK on the current HEAD.
+- **Findings / NAK** → treat each like any review finding: **reproduce it and judge its true severity first — don't trust a "minor / no bug" framing.** Fix the root cause, add a regression test that pins it (verify it fails *without* the fix), run the project's tests, commit. Then **re-review the delta**: `/tmp/codexreview review --base <prev-sha> --post --update-last`. The `--update-last` edits the tool's previous comment instead of stacking a new one, so an N-round fix loop leaves ONE up-to-date codex comment, not N. Iterate until ACK on the current HEAD.
 
 A codex ACK is only valid for the **exact HEAD it reviewed** — after any new commit, re-review (same SHA discipline as any reviewer).
 
