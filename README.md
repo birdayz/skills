@@ -1,6 +1,6 @@
 # birdayz-skills
 
-Claude Code skills. Image generation, code review, that sort of thing.
+Claude Code skills. Image generation, code review, unattended visual iteration, Minecraft mod dev.
 
 ## Install
 
@@ -10,6 +10,9 @@ Claude Code skills. Image generation, code review, that sort of thing.
 /plugin marketplace add birdayz/skills
 /plugin install image-generation@birdayz-skills
 /plugin install codex-review@birdayz-skills
+/plugin install playtest-loop@birdayz-skills
+/plugin install minecraft-mod-development@birdayz-skills
+/plugin install minecraft-npc-design@birdayz-skills
 ```
 
 ### CLI
@@ -18,6 +21,9 @@ Claude Code skills. Image generation, code review, that sort of thing.
 claude plugin marketplace add https://github.com/birdayz/skills
 claude plugin install image-generation@birdayz-skills
 claude plugin install codex-review@birdayz-skills
+claude plugin install playtest-loop@birdayz-skills
+claude plugin install minecraft-mod-development@birdayz-skills
+claude plugin install minecraft-npc-design@birdayz-skills
 ```
 
 ## Skills
@@ -47,6 +53,20 @@ The key point: codex is **manual** — no bot or webhook runs it. The skill trig
 ```
 
 Requires the `codex` CLI (logged in) and `gh`. See the [SKILL.md](codex-review/SKILL.md) for details.
+
+### playtest-loop
+
+Unattended visual iteration for GUI software — build/see/fix UI, game, or rendering work without a human watching the screen. The app renders on a virtual display nobody sees, the agent captures pixels and `Read`s them as images, scenarios drive themselves via env-gated hooks, behavior is proven by greppable functional asserts, and quality is gated by LLM-judge review loops that iterate to a score.
+
+Domain-agnostic (Electron, SDL, native, game engines). Bundled tools: `launch-offscreen.sh`, `capture.sh`, and a dependency-free Go `keysend` uinput injector. See the [SKILL.md](playtest-loop/SKILL.md).
+
+Requires `Xvfb`, `ffmpeg`, ImageMagick, and Mesa software GL (`llvmpipe`).
+
+### minecraft-mod-development & minecraft-npc-design
+
+Agent-driven Minecraft **NeoForge (26.1.x)** mod development, built on `playtest-loop`. `minecraft-mod-development` covers the decompiled-API lookup discipline, unit-test-first strategy, headless offscreen capture, driving the live game on Wayland/sway, and a pile of hard-won MC 26.1.x API gotchas. `minecraft-npc-design` is an offline-first custom-entity pipeline — JSON cube models, procedural atlas painting, a ~1s previewer, a persona-reviewer loop, and an auto-orbit in-game photo studio.
+
+See [minecraft/README.md](minecraft/README.md) and the per-skill SKILL.md files.
 
 ## License
 

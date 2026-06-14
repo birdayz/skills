@@ -10,12 +10,16 @@ The problem: an agent can't see a window, can't reliably press keys, and every a
 patience. The fix is a harness where **the app renders on a display nobody sees, the agent
 captures pixels and reads them as images, and scenarios drive themselves**.
 
+This skill is domain-agnostic — it has driven game mods, desktop GUIs, and renderers. The examples
+use a game launch command, but anything that opens a window (Electron, SDL, a Gradle `run` task, a
+native app) works the same way.
+
 ## 1. The virtual display
 
 Use the bundled launcher (`tools/` is relative to THIS skill's directory):
 
 ```bash
-<skill-dir>/tools/launch-offscreen.sh -r 1280x720 -l /tmp/app.log -- ./gradlew runClient
+<skill-dir>/tools/launch-offscreen.sh -r 1280x720 -l /tmp/app.log -- <your app launch command>
 ```
 
 It starts Xvfb if needed, scrubs `WAYLAND_DISPLAY` (the app must not grab the user's real
@@ -49,7 +53,7 @@ kernel level, not the display server — bundled in this skill:
 
 ```bash
 cd <skill-dir>/tools/keysend && go build -o keysend .     # once; no dependencies
-sudo ./keysend tap:t type:"/teleport 0 80 0" tap:enter    # /dev/uinput needs root or input group
+sudo ./keysend tap:t type:"/some-command" tap:enter       # /dev/uinput needs root or input group
 ```
 
 It creates a virtual kernel keyboard, so it works on Wayland/sway where xdotool cannot.
@@ -60,14 +64,14 @@ Polling `sleep N` race-fails constantly. Gate every phase on the app's **log**. 
 capturer does gate + settle + series in one call:
 
 ```bash
-<skill-dir>/tools/capture.sh -l /tmp/app.log -g "world loaded" -n 12 -i 5 -o /tmp/review
+<skill-dir>/tools/capture.sh -l /tmp/app.log -g "ready" -n 12 -i 5 -o /tmp/review
 # → waits for the log line, settles, grabs /tmp/review_01.png … _12.png; Read them as images
 ```
 
 Manual gate, when you need custom phasing:
 
 ```bash
-until grep -q "world loaded" /tmp/app.log; do sleep 3; done   # then capture
+until grep -q "ready" /tmp/app.log; do sleep 3; done   # then capture
 ```
 
 Pitfalls that will bite you exactly once each:
@@ -114,6 +118,8 @@ A launch is the expensive unit (~1 min). Spend it well:
 - Batch: one launch serves many vantages (camera-cycling hook) + several asserts.
 - Run launches in the background; do other work; gate on log lines, not waiting.
 
-Worked example: the [the sibling skills](../README.md) skills used this harness to ship a
-complete game mod — features verified by asserts, reviewed by two judge personas to 10/10 —
-with the user only ever seeing finished results.
+Worked example: this harness shipped a complete Minecraft mod fully unattended — gameplay verified
+by functional asserts, looks reviewed by two judge personas (an end-user "kid" judge and a
+domain-accuracy judge) iterated to 10/10 — with the user only ever seeing finished results. The
+`mod-development` and `npc-design` skills (this marketplace's Minecraft plugins) apply this loop to
+that domain.

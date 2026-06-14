@@ -4,7 +4,7 @@
     "name": "birdayz"
   },
   "metadata": {
-    "description": "Assorted Claude Code skills: image generation and code review",
+    "description": "Assorted Claude Code skills: image generation, code review, unattended visual iteration, and Minecraft NeoForge mod development",
     "homepage": "https://github.com/birdayz/skills"
   },
   "plugins": [
@@ -38,6 +38,57 @@
       ],
       "skills": [
         "./codex-review"
+      ]
+    },
+    {
+      "name": "playtest-loop",
+      "description": "Unattended visual iteration for GUI software: render on a virtual display, capture screenshots the agent reads, drive via env-gated hooks, verify with functional asserts, gate quality with LLM-judge loops",
+      "source": "./",
+      "category": "developer-tools",
+      "keywords": [
+        "testing",
+        "screenshots",
+        "headless",
+        "gui",
+        "llm-judge",
+        "xvfb"
+      ],
+      "skills": [
+        "./playtest-loop"
+      ]
+    },
+    {
+      "name": "minecraft-mod-development",
+      "description": "Agent-driven Minecraft NeoForge (26.1.x) mod development: decompiled-API lookup, unit-test-first, headless offscreen capture, Wayland/sway game-driving, and hard-won MC API gotchas",
+      "source": "./",
+      "category": "developer-tools",
+      "keywords": [
+        "minecraft",
+        "neoforge",
+        "modding",
+        "gamedev",
+        "java",
+        "gradle"
+      ],
+      "skills": [
+        "./minecraft/mod-development"
+      ]
+    },
+    {
+      "name": "minecraft-npc-design",
+      "description": "Offline-first custom NPC/entity pipeline for Minecraft NeoForge mods: JSON cube models, procedural atlas painting, ~1s previewer, persona-reviewer loop, and an auto-orbit in-game photo studio",
+      "source": "./",
+      "category": "developer-tools",
+      "keywords": [
+        "minecraft",
+        "neoforge",
+        "modding",
+        "entity",
+        "npc",
+        "gamedev"
+      ],
+      "skills": [
+        "./minecraft/npc-design"
       ]
     }
   ]

@@ -3,106 +3,82 @@ name: codex-review
 description: Kick off an external code review by OpenAI Codex (the `codex` CLI) on the current branch/PR, post it as a PR comment, and drive the fix→re-review loop. Use when the user asks for a "codex review", says "/codex-review", "kick off codex", or wants a second independent reviewer on a change. Repo-agnostic — works on any git repo with a GitHub PR.
 user-invocable: true
 allowed-tools: Bash, Read
-argument-hint: "[--base <branch>] [--model <model>] [--reasoning-effort <effort>] [focus instructions]"
+argument-hint: "[--base <branch>] [--model <model>] [--effort <effort>] [--post] [focus instructions]"
 ---
 
 # Codex Review
 
-Run an independent code review by **OpenAI Codex** (the local `codex` CLI) on the current branch, post it to the PR, and iterate on findings like any other review gate. Works on any repository.
+Run an independent code review by **OpenAI Codex** (the local `codex` CLI), post it to the PR, and iterate on findings like any other review gate. Works on any repository.
+
+The fragile part — invoking `codex` so it can't hang, telling an empty/quota failure apart from a clean pass, parsing the verdict, and rendering+posting the PR comment — is done by the **`codexreview` Go tool** that ships with this skill (`codexreview/`). Drive the tool; don't hand-assemble `codex` shell pipelines (that's how the `codex exec` stdin-hang and the "empty file looks like an ACK" traps happen).
 
 ## CRITICAL: codex is MANUAL — trigger it, never wait for it
 
-A codex review only happens because **someone ran the `codex` CLI**. There is no bot, webhook, GitHub App, or CI job that runs it automatically. Therefore:
-
-- **Never poll or wait for a codex review you did not start** — it will never arrive on its own. If a codex review is "expected", that means *run it yourself* with the steps below.
-- Codex posts under the **human's own GitHub account**, not a dedicated `[bot]` login — so you can't identify its reviews by author, and a hand-pasted review looks identical to a CLI-posted one.
+A codex review only happens because **someone ran `codex`**. There is no bot, webhook, GitHub App, or CI job that runs it. So **never poll or wait for a codex review you did not start** — if one is "expected", *run it yourself*. Codex posts under the **human's own GitHub account** (no `[bot]` login), so you can't identify its reviews by author.
 
 ## Preconditions & cost
 
-- A full review is an LLM agent run: it **costs the user's Codex/ChatGPT credits and can take a few minutes** on a large diff. For a big change, say so before launching.
-- `codex` installed and authenticated: `codex login status` should report a logged-in account. (`which codex` to confirm it's on PATH.)
-- `gh` authenticated, and the current branch has an open PR (or you'll pass an explicit PR number).
-- **Commit or stash unrelated working-tree changes first.** Codex inspects the repo via `git status` / `git diff`; stray edits and scratch files pollute the review scope and the reported SHA.
+- A full review is an LLM agent run: it **costs the user's Codex/ChatGPT credits and takes a few minutes** on a large diff. For a big change, say so before launching.
+- `codex` installed and authenticated (`codex login status` reports a logged-in account; `which codex`).
+- For posting: `gh` authenticated and the branch has an open PR (or pass `--pr <n>`). A review with no PR still works — just omit `--post` and read the verdict locally.
+- **Commit or stash unrelated working-tree changes first.** Codex inspects the repo via `git status`/`git diff`; stray edits pollute the scope and the reported SHA.
 
-## Step 1 — run the review (non-interactive, read-only, no hang)
+## Step 0 — build the tool (once)
 
-By default, run reviews with `gpt-5.5` and `xhigh` reasoning effort. The caller may choose different settings with `--model <model>` and `--reasoning-effort <effort>`; if they do not, pass these defaults explicitly. When invoked as a skill, parse those options from the user's request and assign the shell variables below; the environment variables are just an automation-friendly equivalent.
-
-Global flags go **before** the `review` subcommand:
+The tool is Go source next to this SKILL.md. Build it once to a stable path and reuse:
 
 ```bash
-# Defaults unless the caller supplied --model / --reasoning-effort.
-model="${CODEX_REVIEW_MODEL:-gpt-5.5}"
-reasoning_effort="${CODEX_REVIEW_REASONING_EFFORT:-xhigh}"
+SKILL_DIR="$(dirname "$(readlink -f "$0" 2>/dev/null || echo .)")"   # or the dir this SKILL.md lives in
+# When you know the skill dir, just point at codexreview/ inside it:
+go build -o /tmp/codexreview "<skill-dir>/codexreview" && echo "built /tmp/codexreview"
+```
 
-# Resolve the PR's base branch (fallback to the repo's default branch).
+(`go run "<skill-dir>/codexreview" …` also works and skips the build step.) The tool has no third-party dependencies, so the build is offline and instant.
+
+## Step 1 — run the review
+
+Branch/PR diff review (the common case). The tool resolves the scratch dir, runs codex **read-only, non-interactive, with stdin closed and a hard timeout** (so it cannot hang), saves `review.md`/`review.log`, classifies the verdict, and — with `--post` — renders and posts the PR comment:
+
+```bash
+# Resolve the PR base (fallback to the repo default). The tool reviews the diff
+# from <base> to HEAD.
 base=$(gh pr view --json baseRefName -q .baseRefName 2>/dev/null \
        || git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's@^origin/@@' \
        || echo main)
 
-# Per-repo + per-branch scratch dir. No fixed filenames, so concurrent reviews
-# (another repo, PR, or session) never clash. Step 2 recomputes the SAME path
-# from the same repo+branch, so nothing has to be threaded between the shells.
-b=$(git rev-parse --abbrev-ref HEAD)
-dir="${TMPDIR:-/tmp}/codex-review/$(git rev-parse --show-toplevel | cksum | cut -d' ' -f1)-${b//[^A-Za-z0-9._-]/_}"
-mkdir -p "$dir"
-
-# Time the run — duration/model/effort go in the posted comment.
-start=$(date +%s)
-codex -m "$model" -c model_reasoning_effort="$reasoning_effort" -s read-only -a never review --base "$base" \
-  > "$dir/review.md" 2> "$dir/review.log"
-rc=$?
-echo "exit=$rc  review lines=$(wc -l < "$dir/review.md")  dir=$dir"
-dur=$(( $(date +%s) - start ))
-# Hand off run metadata to Step 2: line 1 duration, 2 model, 3 effort.
-printf '%s\n%s\n%s\n' "$((dur/60))m$((dur%60))s" "$model" "$reasoning_effort" > "$dir/meta.txt"
-# An empty review file is NOT a clean pass. codex can exit 0 with NO verdict when
-# it is rate-limited (5h/weekly quota), unauthenticated, or errored mid-run — the
-# cause is in the stderr log, never the (empty) stdout review. Always inspect:
-if [ "$rc" -ne 0 ] || [ ! -s "$dir/review.md" ]; then
-  echo "!! codex produced no review — scanning stderr for quota/auth/errors:"
-  grep -iE 'rate.?limit|quota|usage|429|too many|reached|not logged in|unauthor|stream error|error:' "$dir/review.log" | tail -20
-  echo "(full stderr at $dir/review.log; also try 'codex login status' and chatgpt.com/codex/settings/usage)"
-fi
+/tmp/codexreview review --base "$base" --post
 ```
 
-- `--model <model>` / `CODEX_REVIEW_MODEL` — Codex model to pass as `-m <model>`; default `gpt-5.5`.
-- `--reasoning-effort <effort>` / `CODEX_REVIEW_REASONING_EFFORT` — reasoning effort to pass as `-c model_reasoning_effort=<effort>`; default `xhigh`.
-- `-s read-only` — codex may read files and run git, but **never edits** the tree.
-- `-a never` — never block on an approval prompt: the run **can't hang** and **won't auto-post** (codex's GitHub-posting tool is approval-gated and is cleanly skipped under `never`), so you stay in control of what gets posted.
-- `--base <branch>` — review every commit on the branch since `<branch>`. For a **delta re-review** after addressing findings, pass the previously-reviewed SHA instead: `--base <prev-sha>` (reviews only the new commits — cheaper and focused).
+Defaults: `--model gpt-5.5`, `--effort xhigh`, `--timeout 25m`. Override with `--model` / `--effort` / `--timeout`, or the `CODEX_REVIEW_MODEL` / `CODEX_REVIEW_REASONING_EFFORT` env vars. Other flags:
+
+- `--base <branch|sha>` — review every commit since `<base>`. For a **delta re-review** after a fix, pass the previously-reviewed SHA: `--base <prev-sha>` (cheaper, focused).
 - `--commit <sha>` — review a single commit instead.
-- **A custom focus `[PROMPT]` is mutually exclusive with BOTH `--base` and `--commit`** in current codex: `codex review --base "$base" "Focus on X"` fails with `error: the argument '--base <BRANCH>' cannot be used with '[PROMPT]'` (same for `--commit`). A bare prompt (`codex review "Focus on X"`, or with `--uncommitted`) reviews the working-tree changes, NOT a branch/commit range. So for a PR/branch review you CANNOT steer with a focus prompt — run `--base "$base"` plain and rely on the diff itself (any findings docs, RFCs, or TODOs in the diff are visible to codex). If the skill was invoked with `[focus instructions]`, tell the user the focus can't be injected into a branch-scoped review and proceed with the plain `--base` review (or, only if the intent is the uncommitted working tree, drop `--base` and pass the prompt).
+- `--post` — render the comment from the Go template and post via `gh`. Omit it to only get the verdict locally (no PR needed).
+- `--pr <n>` / `--repo owner/name` — post target (default: current branch's PR, repo inferred from cwd).
+- `--bypass-sandbox` — use `--dangerously-bypass-approvals-and-sandbox` instead of `-s read-only`. **Required when running inside another sandbox/agent** (codex's `bwrap` can't nest; without this it reviews on *less* evidence and can miss findings). A review writes nothing, so there's no edit risk. In a plain human terminal, omit it.
 
-**Output split:** the **final review prose is on stdout**; the full trace — tool calls, the diff, the model's reasoning — is on **stderr** (large). Read stdout for the verdict; dip into stderr only to see what codex actually inspected.
+The tool prints `VERDICT: ACK|NAK|UNKNOWN`, the `review.md` path, the posted-comment URL (if `--post`), and the review prose. **It exits non-zero — and never reports an ACK — on a timeout, an empty review, or a quota/auth failure**, with the matching stderr signature, so an empty run can never be mistaken for a clean pass.
 
-A long review can exceed a foreground timeout — run it with `run_in_background: true` (or a generous `timeout`) and read the output file when it finishes.
+### Steered analysis (not a diff review)
 
-## Step 2 — post it to the PR
-
-Under `-a never` codex did **not** post; you do, so the review is on the record next to any other reviewers. Wrap the review in a header line (review duration, in the Claude-Code-review style) and a footer attribution:
+`codex review` **cannot take a focus prompt** — `--base`/`--commit` are mutually exclusive with `[PROMPT]` in codex. For a steered question ("what test gaps remain on this branch?", a targeted audit), use the tool's `exec` mode, which passes the prompt with stdin closed:
 
 ```bash
-# Recompute the SAME scratch dir Step 1 used (this runs in a separate shell).
-b=$(git rev-parse --abbrev-ref HEAD)
-dir="${TMPDIR:-/tmp}/codex-review/$(git rev-parse --show-toplevel | cksum | cut -d' ' -f1)-${b//[^A-Za-z0-9._-]/_}"
-
-# Never post an empty review (codex errored, or wrote only whitespace) — abort instead.
-grep -q '[^[:space:]]' "$dir/review.md" 2>/dev/null || { echo "review is empty — see $dir/review.log; not posting"; exit 1; }
-
-pr=$(gh pr view --json number -q .number)            # current branch's PR
-sha=$(git rev-parse --short HEAD)
-[ -f "$dir/meta.txt" ] && { read -r duration; read -r model; read -r effort; } < "$dir/meta.txt"   # written in Step 1
-dur_phrase=${duration:+ in $duration}                # " in 2m21s", or "" if unknown
-model=${model:-gpt-5.5}; effort=${effort:-xhigh}     # fall back to the skill defaults
-version=$(codex --version 2>/dev/null | grep -oE '[0-9]+(\.[0-9]+)+' | head -n1); version=${version:-unknown}  # bare semver, e.g. 0.55.0
-skill_url="https://github.com/birdayz/skills/tree/master/codex-review"
-
-gh pr comment "$pr" --body "$(printf '**Codex finished review%s** · `%s`\n\n---\n\n%s\n\n---\n\nGenerated by Codex %s on %s (%s) and [codex-review](%s)' \
-  "$dur_phrase" "$sha" "$(cat "$dir/review.md")" "$version" "$model" "$effort" "$skill_url")"
+/tmp/codexreview exec --prompt "Audit this branch for missing regression tests on the resource-limit paths" --timeout 15m
 ```
 
-The posted comment then reads:
+If the skill was invoked with `[focus instructions]` for a **branch/PR** review, tell the user the focus can't be injected into a diff review and either run the plain `--base` review (codex sees any findings docs/RFCs/TODOs in the diff itself) or, if they meant the working tree, use `exec`.
+
+## Step 2 — classify and iterate
+
+Read the verdict the tool printed (and `review.md`):
+
+- **ACK / no blocking issues** → done; report to the user.
+- **Findings / NAK** → treat each like any review finding: **reproduce it and judge its true severity first — don't trust a "minor / no bug" framing.** Fix the root cause, add a regression test that pins it (verify it fails *without* the fix), run the project's tests, commit. Then **re-review the delta**: `/tmp/codexreview review --base <prev-sha> --post`. Iterate until ACK on the current HEAD.
+
+A codex ACK is only valid for the **exact HEAD it reviewed** — after any new commit, re-review (same SHA discipline as any reviewer).
+
+## What the posted comment looks like
 
 ```
 **Codex finished review in 2m21s** · `a1b2c3d`
@@ -116,56 +92,19 @@ The posted comment then reads:
 Generated by Codex 0.139.0 on gpt-5.5 (xhigh) and [codex-review](https://github.com/birdayz/skills/tree/master/codex-review)
 ```
 
-(`codex-review` renders as a clickable link to the skill folder.)
+(`codex-review` is a clickable link to the skill.) Override the template with `--template <file>` (a Go `text/template` with fields `.Kind .Duration .SHA .Review .Version .Model .Effort .SkillURL`).
 
-(`gh` infers the repo from the working directory — no hard-coded owner/repo. Pass `--repo owner/name` and an explicit `pr` only if you're outside the checkout.)
+## Why the tool (the gotchas it removes)
 
-## Step 3 — classify and iterate
+These are the traps a hand-written `codex` pipeline falls into — the tool handles each, but know them so you trust the output and can debug a weird run:
 
-Read the review (`$dir/review.md`, the scratch dir Step 1 printed) and classify the verdict (it usually ends with an `ACK` / `NAK` / a findings list):
+- **`codex exec` hangs forever on open stdin.** `codex exec` reads stdin to *append* to the prompt (`--help`: "if stdin is piped … appended as a `<stdin>` block"). With stdin left open it prints `Reading additional input from stdin...` and **blocks forever, empty output** — a `codex exec … | tail` hangs exactly this way. The tool sets `Stdin = nil` (→ /dev/null), so this is structurally impossible, plus a `--timeout` that process-group-kills a stuck run (codex + its `bwrap` children).
+- **Empty output ≠ clean pass — it's a quota/auth failure.** codex exits **0 with no verdict** when the 5h/weekly rate limit is exhausted, when unauthenticated, or when it errors mid-stream. A zero-length review is a FAILED run, never an ACK. The tool refuses to report ACK on an empty review and surfaces the stderr signature (`rate limit`/`quota`/`429`/`not logged in`/…); confirm with `codex login status`.
+- **Flag order is load-bearing.** `-m`, `-c model_reasoning_effort=…`, `-s|--bypass`, `-a` are global flags **before** the subcommand; `--base`/`--commit` come after `review`. Misordering errors with "unexpected argument". The tool always emits the correct order.
+- **`--base`/`--commit` ⊕ `[PROMPT]`.** codex rejects a focus prompt combined with a branch/commit range. The tool keeps `review` (diff) and `exec` (steered) as separate modes and errors early if you mix them.
+- **Don't double-background.** Run the tool with *one* level of backgrounding (your harness's background mode **or** `nohup … &`, never both) or just foreground it — the tool's own `--timeout` bounds the run. Doubling up makes the launching shell return instantly and you read a mid-flight log. Wait for the real exit, then read the verdict.
+- **Clean tree first** — codex reads `git status`; stray edits widen/skew the review.
 
-- **ACK / no blocking issues** → done; report to the user.
-- **Findings** → treat each like any review finding: **reproduce it and judge its true severity first — don't trust a "minor / no bug" framing at face value.** Fix the root cause, add a regression test that pins it (verify the test fails *without* the fix), run the project's tests, commit. Then **re-review the delta**: `codex -m "$model" -c model_reasoning_effort="$reasoning_effort" -s read-only -a never review --base <prev-sha>` and post again. Iterate until ACK on the current HEAD.
+## Maintaining the tool
 
-A codex ACK is only valid for the **exact HEAD it reviewed** — after any new commit, re-review (same SHA discipline as any reviewer).
-
-## One-shot recipe
-
-```bash
-model="${CODEX_REVIEW_MODEL:-gpt-5.5}"
-reasoning_effort="${CODEX_REVIEW_REASONING_EFFORT:-xhigh}"
-base=$(gh pr view --json baseRefName -q .baseRefName 2>/dev/null || echo main)
-pr=$(gh pr view --json number -q .number)
-skill_url="https://github.com/birdayz/skills/tree/master/codex-review"
-dir=$(mktemp -d)                                     # unique per run — no fixed names, no clash
-start=$(date +%s)
-codex -m "$model" -c model_reasoning_effort="$reasoning_effort" -s read-only -a never review --base "$base" > "$dir/review.md" 2> "$dir/review.log"
-grep -q '[^[:space:]]' "$dir/review.md" 2>/dev/null || { echo "review is empty — see $dir/review.log; not posting"; exit 1; }
-dur=$(( $(date +%s) - start )); duration="$((dur/60))m$((dur%60))s"; dur_phrase=${duration:+ in $duration}   # self-contained: single shell, no handoff
-sha=$(git rev-parse --short HEAD)
-version=$(codex --version 2>/dev/null | grep -oE '[0-9]+(\.[0-9]+)+' | head -n1); version=${version:-unknown}
-gh pr comment "$pr" --body "$(printf '**Codex finished review%s** · `%s`\n\n---\n\n%s\n\n---\n\nGenerated by Codex %s on %s (%s) and [codex-review](%s)' \
-  "$dur_phrase" "$sha" "$(cat "$dir/review.md")" "$version" "$model" "$reasoning_effort" "$skill_url")"
-sed -n '1,80p' "$dir/review.md"   # read the verdict
-```
-
-## Deep, background & nested-sandbox runs
-
-A full `xhigh` review is a long agent run. Three things decide whether a deep run comes back **complete** instead of looking truncated:
-
-- **Don't double-background.** Launch with *one* level of backgrounding — either your harness's background mode **or** `nohup … &`, never both. Doubling up makes the launching shell return instantly, so a "completed" signal fires while `codex` is still running detached; you then read a **mid-flight** log and mistake an unfinished run for an empty/failed one. Wait for the real process exit, then read the **tail** (the `ACK`/`NAK` + `tokens used` line), not a snapshot taken seconds in.
-
-- **Nested sandbox → use the bypass flag.** `-s read-only` sandboxes *every* command codex runs via `bwrap`, which **can't nest** inside another sandbox/agent (e.g. running codex from inside another coding agent): commands fail with `bwrap: Can't bind mount /oldroot/ on /newroot/`, starving the review of evidence — it still concludes, but on *less*, and can miss real findings. When the environment is already externally sandboxed, swap `-s read-only` for `--dangerously-bypass-approvals-and-sandbox` (its own help: "intended solely for running in environments that are externally sandboxed"). A review writes nothing, so there's no edit risk. In a plain human terminal, keep `-s read-only`.
-
-- **There is no "turn cap" — the context window is the only depth ceiling.** `codex exec`/`review` runs the agent loop until the model emits its final answer; there is no `max_turns` knob to raise. `xhigh` is already max reasoning depth and codex auto-compacts, so deep crawls normally survive. The only real terminal conditions are `ContextWindowExceeded`, `UsageLimitExceeded` (quota), and `ResponseTooManyFailedAttempts`. So a short/empty result is **never** "out of turns" — it's a premature read (above), a quota/auth failure (see Gotchas), or a context-window blowout on a huge audit; for the last, scope to fewer files or split into focused runs. There's no number to bump.
-
-## Gotchas
-
-- **Don't wait for what you didn't trigger** — codex is manual; if a review is "expected", run it.
-- **Flag order**: `-m`, `-c model_reasoning_effort=...`, `-s`, and `-a` are top-level, *before* `review`; `--base`, `--commit`, and `--title` are review options after `review`. Placing global flags after `review` errors with "unexpected argument".
-- **Custom `[PROMPT]` + `--base`/`--commit`** is rejected by the arg parser (`'--base <BRANCH>' cannot be used with '[PROMPT]'`). A focus prompt only works on the working-tree scope (bare `review` / `--uncommitted`), never on a branch or commit range — for a PR review, drop the prompt and run `--base` plain.
-- **Need a *steered* analysis that `review` can't express** (e.g. "what test gaps remain on this branch?", a targeted audit — not a diff review)? Use `codex exec`, NOT `review`: `codex -s read-only -a never exec "PROMPT" < /dev/null > out 2> log`. The **`< /dev/null` is mandatory** in any non-interactive/background context — `codex exec` reads stdin to *append* to the prompt (per `--help`: "if stdin is piped and a prompt is also provided, stdin is appended as a `<stdin>` block"), so with stdin left open it prints `Reading additional input from stdin...` and **blocks forever, producing empty output**. (`-s`/`-a` are still top-level, before `exec`.)
-- **Empty review ≠ clean pass — it's usually a quota/auth failure.** codex exits **0 with no verdict** when the 5h or weekly rate limit is exhausted (it prints the limit interactively but not always to non-interactive stderr), when unauthenticated, or when it errors mid-run. A zero-length `review.md` is a FAILED run, never an ACK — scan the stderr log (`grep -iE 'rate.?limit|quota|usage|429|not logged in' "$dir/review.log"`), confirm with `codex login status`, and re-run after the quota resets. NEVER report "codex found nothing" off an empty file. (Both stdout and stderr are always redirected to files precisely so this is inspectable.)
-- **A run that looks truncated is usually a mid-flight read, not a failure.** See *Deep, background & nested-sandbox runs* above: don't double-background (you'll read the log before codex finishes), and in a nested sandbox use `--dangerously-bypass-approvals-and-sandbox` so commands don't fail under `bwrap`. There is no turn cap to raise.
-- **Clean tree first** — codex reads `git status`; stray edits widen or skew the review.
-- **Heading varies between passes** — if you ever scan for codex's own posted comments, its heading changes across passes (e.g. an initial review vs a re-review); match broadly, not on a fixed prefix.
+`codexreview/` is plain Go, no deps, `go vet`-clean. Keep `gofmt`/`go vet` green. If codex changes its CLI (flag names, the stdin behaviour, new quota signatures), update `codexArgs` / `quotaRE` / `verdictRE` in `main.go` and rebuild. The tool is the single place that encodes how to talk to `codex` correctly — fix it there once, every caller benefits.
