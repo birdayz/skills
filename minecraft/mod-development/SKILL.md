@@ -1,6 +1,6 @@
 ---
 name: mod-development
-description: Agent-driven workflow for developing Minecraft NeoForge mods (MC 26.1.x / calver). How to lay out a multi-mod Gradle repo, look up the REAL deobfuscated API from the decompiled sources jar (not training data), the unit-test-first strategy, launch and DRIVE the game on Wayland/sway with screenshots, run fully unattended via a headless offscreen harness, plus a pile of hard-won MC 26.1.x API gotchas (minecart sync, the render-pipeline rework, world-building). Use whenever working on a NeoForge mod.
+description: Agent-driven workflow for developing Minecraft NeoForge mods (MC 26.1.x / calver). How to scaffold a new mod from scratch (complete starter build.gradle/settings.gradle/mods.toml/@Mod files) and lay out a multi-mod Gradle repo, look up the REAL deobfuscated API from the decompiled sources jar (not training data), the unit-test-first strategy, launch and DRIVE the game on Wayland/sway with screenshots, run fully unattended via a headless offscreen harness, plus a pile of hard-won MC 26.1.x API gotchas (minecart sync, the render-pipeline rework, world-building). Use whenever working on a NeoForge mod.
 ---
 
 # Minecraft NeoForge mod development (agent-driven)
@@ -35,6 +35,112 @@ my-mods/
 ```
 Each mod builds independently: `./gradlew :modb:build` → `modb/build/libs/modb-0.1.0.jar`.
 Gotcha worth repeating: a subproject's `gradle.properties` is NOT auto-read as project properties — declare `mod_id`/`version`/`neo_version` as local `def`s in the subproject `build.gradle`.
+
+## Starting a new mod from scratch
+The files below are the *complete* minimal scaffold — verified by bootstrapping a working MC 26.1.2 mod on NeoForge 26.1.2.76 from nothing. There is no `gradle init` for this; create the files by hand. ModDevGradle does the rest (downloads + decompiles MC on first build, ~2 min).
+
+**0. The Gradle wrapper.** A new repo has no `gradlew`. Either run `gradle wrapper --gradle-version 9.2.1` (needs a system Gradle), or copy `gradlew`, `gradlew.bat`, and `gradle/wrapper/` from any existing Gradle project. Without it, none of the commands below run.
+
+**1. Root `settings.gradle`** (umbrella over one or more mod subprojects):
+```groovy
+pluginManagement { repositories { gradlePluginPortal() } }
+plugins { id 'org.gradle.toolchains.foojay-resolver-convention' version '1.0.0' }
+include 'modb'        // one line per mod subproject
+```
+
+**2. Root `gradle.properties`:**
+```properties
+org.gradle.jvmargs=-Xmx2G
+org.gradle.parallel=true
+org.gradle.caching=true
+org.gradle.configuration-cache=false   # ModDevGradle run tasks aren't always config-cache safe
+```
+
+**3. Subproject `modb/build.gradle`** — self-contained (look up the latest `neo_version` from the maven metadata in "Versions & toolchain"):
+```groovy
+plugins {
+    id 'java-library'
+    id 'net.neoforged.moddev' version '2.0.141'
+}
+def mod_id = 'modb', mod_version = '0.1.0', mod_group_id = 'dev.you.modb'
+def minecraft_version = '26.1.2', minecraft_version_range = '[26.1.2]'
+def neo_version = '26.1.2.76'        // <-- newest from maven-metadata.xml
+version = mod_version; group = mod_group_id
+base { archivesName = mod_id }
+
+repositories { mavenCentral() }
+dependencies {                       // fast pure-logic tests, no game launch
+    testImplementation platform('org.junit:junit-bom:5.11.3')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+tasks.named('test') { useJUnitPlatform() }
+java.toolchain.languageVersion = JavaLanguageVersion.of(25)   // Mojang ships Java 25 in 26.1.x
+
+neoForge {
+    version = neo_version
+    runs {
+        client { client(); jvmArgument '-Xmx4G'
+            if (project.hasProperty('quickWorld')) {           // boot straight into a world
+                programArgument '--quickPlaySingleplayer'; programArgument project.getProperty('quickWorld')
+            }
+        }
+        server { server(); programArgument '--nogui' }
+        configureEach { systemProperty 'forge.logging.markers', 'REGISTRIES'; logLevel = org.slf4j.event.Level.DEBUG }
+    }
+    mods { "${mod_id}" { sourceSet(sourceSets.main) } }
+}
+// Expand ${...} placeholders in the mods.toml template into a generated resource dir:
+var genMeta = tasks.register("generateModMetadata", ProcessResources) {
+    var props = [minecraft_version: minecraft_version, minecraft_version_range: minecraft_version_range,
+                 neo_version: neo_version, mod_id: mod_id, mod_version: mod_version, mod_license: 'MIT', mod_name: 'Mod B', mod_group_id: mod_group_id]
+    inputs.properties props; expand props; from 'src/main/templates'; into 'build/generated/sources/modMetadata'
+}
+sourceSets.main.resources.srcDir genMeta
+neoForge.ideSyncTask genMeta
+```
+
+**4. `modb/src/main/templates/META-INF/neoforge.mods.toml`** (placeholders expanded by step 3):
+```toml
+license="${mod_license}"
+[[mods]]
+modId="${mod_id}"
+version="${mod_version}"
+displayName="${mod_name}"
+[[dependencies.${mod_id}]]
+    modId="neoforge"
+    type="required"
+    versionRange="[${neo_version},)"
+    side="BOTH"
+[[dependencies.${mod_id}]]
+    modId="minecraft"
+    type="required"
+    versionRange="${minecraft_version_range}"
+    side="BOTH"
+```
+
+**5. `modb/src/main/java/dev/you/modb/ModB.java`** — the `@Mod` entry:
+```java
+package dev.you.modb;
+import com.mojang.logging.LogUtils; import org.slf4j.Logger;
+import net.neoforged.bus.api.IEventBus; import net.neoforged.fml.ModContainer; import net.neoforged.fml.common.Mod;
+@Mod(ModB.MODID)
+public class ModB {
+    public static final String MODID = "modb";
+    public static final Logger LOGGER = LogUtils.getLogger();
+    public ModB(IEventBus modEventBus, ModContainer modContainer) {
+        LOGGER.info("ModB loaded");   // grep this line in the headless load-check
+    }
+}
+```
+
+**6. Validate immediately** (in order, cheap → expensive — see the testing pyramid):
+```bash
+./gradlew :modb:test        # compiles main against NeoForge + runs JUnit; first run ~2 min (decompile)
+timeout --signal=KILL 150 ./gradlew :modb:runServer --console=plain > /tmp/srv.log 2>&1
+grep "ModB loaded" /tmp/srv.log   # success is THIS line + no Exception — NOT the exit code
+```
+Notes confirmed in practice: the dev `runServer`/`runClient` **auto-accept the EULA** (no `eula.txt` needed) and create the run dir at `modb/run/` (saves in `modb/run/saves/`). A killed/timed-out server never exits 0 — judge the load-check by grepping the log, not the exit status.
 
 ## Versions & toolchain
 - **Minecraft uses calver since 2026**: `26.1`, `26.1.1`, `26.1.2` … (year.release.patch). `26.1` = "Tiny Takeover" (Mar 2026).
@@ -151,6 +257,7 @@ popping up where it can be seen. This is the MC-specific instance of the generic
    ```
 
 **Gotchas / tips:**
+- Reliable client-lifecycle log gates (dogfood-verified on MC 26.1.2): `GL info: llvmpipe … GL version 4.6` (software GL is up), `Backend library: LWJGL` (window created), and **`Sound engine started`** (the client has reached the **title screen** — safe to screenshot). Gate a title-screen capture on `Sound engine started`; gate world/feature captures on your demo's own markers.
 - Poll `/tmp/mc_xvfb.log` for a demo start marker (e.g. `Riders ready`) before recording; if the auto-demo
   loops, to catch an early feature record right after a FRESH start marker appears.
 - First-person ride view mostly faces the sky/forward — fine for lava/ocean (you're inside them) but bad
