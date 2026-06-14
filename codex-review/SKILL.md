@@ -32,13 +32,16 @@ stable path and verify the build before relying on it:
 
 ```bash
 SKILL_DIR="/abs/path/to/this/skill"     # the directory this SKILL.md lives in
-go build -o /tmp/codexreview "$SKILL_DIR/codexreview" \
+# cd into the module + GOWORK=off so an INHERITED go.work in the repo you're
+# reviewing (which doesn't list this module) can't break the build with
+# "not one of the workspace modules".
+( cd "$SKILL_DIR/codexreview" && GOWORK=off go build -o /tmp/codexreview . ) \
   && /tmp/codexreview 2>&1 | grep -q 'usage:' \
   && echo "built + sane: /tmp/codexreview" \
   || { echo "BUILD FAILED — fix codexreview/ before reviewing"; exit 1; }
 ```
 
-The tool has no third-party dependencies — the build is offline and instant. (`go run "$SKILL_DIR/codexreview" …` also works and skips the explicit build.)
+The tool has no third-party dependencies — the build is offline and instant. (`GOWORK=off go run "$SKILL_DIR/codexreview" …` also works and skips the explicit build.)
 
 ## Step 1 — run the review
 
@@ -113,4 +116,4 @@ These are the traps a hand-written `codex` pipeline falls into — the tool hand
 
 ## Maintaining the tool
 
-`codexreview/` is plain Go, no deps, `go vet`-clean. Keep `gofmt`/`go vet` green. If codex changes its CLI (flag names, the stdin behaviour, new quota signatures), update `codexArgs` / `quotaRE` / `verdictRE` in `main.go` and rebuild. The tool is the single place that encodes how to talk to `codex` correctly — fix it there once, every caller benefits.
+`codexreview/` is plain Go, no deps, `go vet`-clean. Keep `gofmt`/`go vet` green. If codex changes its CLI (flag names, the stdin behaviour, new quota signatures), update `codexArgs` / `quotaRE` / `verdictLineRE` in `main.go` (and the cases in `verdict_test.go`) and rebuild. The tool is the single place that encodes how to talk to `codex` correctly — fix it there once, every caller benefits.

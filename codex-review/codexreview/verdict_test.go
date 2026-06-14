@@ -10,6 +10,9 @@ func TestClassifyVerdict(t *testing.T) {
 		{"bare ACK", "Looks fine.\n\nACK", "ACK"},
 		{"bare NAK", "Found a bug.\n\nNAK", "NAK"},
 		{"bold NAK", "...\n\n**NAK.**", "NAK"},
+		{"underscore-emphasis NAK", "...\n_NAK_", "NAK"},
+		{"NAKED is not NAK", "the change is NAKED of tests", "UNKNOWN"},
+		{"ACKNOWLEDGE is not ACK", "ACKNOWLEDGE the risk", "UNKNOWN"},
 		{"LGTM line", "all good\nLGTM", "ACK"},
 		{"ACK with tail", "ACK — implement it.", "ACK"},
 

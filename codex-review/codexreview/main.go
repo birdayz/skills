@@ -56,8 +56,10 @@ var quotaRE = regexp.MustCompile(`(?i)rate.?limit|quota|usage limit|429|too many
 // verdictLineRE matches a VERDICT LINE — a line whose first word (after optional
 // markdown bullets / emphasis / quote markers) is ACK / NAK / LGTM. Anchored to the
 // line start so a verdict word buried mid-prose ("this isn't a clean ACK", "would
-// NAK if…") does NOT count. Code spans are stripped before matching (stripCode).
-var verdictLineRE = regexp.MustCompile(`(?im)^[\s>*_#-]*(ACK|NAK|LGTM)\b`)
+// NAK if…") does NOT count. Code spans are stripped before matching. The trailing
+// `(?:\b|_)` also closes on a `_` so underscore-emphasis (`_NAK_`) matches, while a
+// longer word (`NAKED`, `ACKNOWLEDGE`) still does not.
+var verdictLineRE = regexp.MustCompile(`(?im)^[\s>*_#-]*(ACK|NAK|LGTM)(?:\b|_)`)
 
 // fencedRE / inlineCodeRE strip fenced blocks and inline-code spans so a verdict
 // word quoted inside code can never be read as the reviewer's verdict.
