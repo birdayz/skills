@@ -41,26 +41,8 @@
       ]
     },
     {
-      "name": "minecraft-playtest-loop",
-      "description": "Unattended visual iteration for Minecraft mod development: render the dev client/server on a virtual display, capture screenshots the agent reads, drive the game via env-gated demo hooks, verify with functional asserts, gate quality with LLM-judge loops. The offscreen foundation mod-development and npc-design build on",
-      "source": "./",
-      "category": "developer-tools",
-      "keywords": [
-        "minecraft",
-        "neoforge",
-        "modding",
-        "headless",
-        "screenshots",
-        "llm-judge",
-        "xvfb"
-      ],
-      "skills": [
-        "./minecraft/playtest-loop"
-      ]
-    },
-    {
-      "name": "minecraft-mod-development",
-      "description": "Agent-driven Minecraft NeoForge (26.1.x) mod development: decompiled-API lookup, unit-test-first, headless offscreen capture, Wayland/sway game-driving, and hard-won MC API gotchas",
+      "name": "minecraft",
+      "description": "Agent-driven Minecraft NeoForge (26.1.x) mod development — three skills as a set: playtest-loop (offscreen unattended-iteration harness), mod-development (scaffold a mod from scratch + decompiled-API discipline + hard-won 26.1.x gotchas), and npc-design (offline-first custom-entity pipeline)",
       "source": "./",
       "category": "developer-tools",
       "keywords": [
@@ -72,23 +54,8 @@
         "gradle"
       ],
       "skills": [
-        "./minecraft/mod-development"
-      ]
-    },
-    {
-      "name": "minecraft-npc-design",
-      "description": "Offline-first custom NPC/entity pipeline for Minecraft NeoForge mods: JSON cube models, procedural atlas painting, ~1s previewer, persona-reviewer loop, and an auto-orbit in-game photo studio",
-      "source": "./",
-      "category": "developer-tools",
-      "keywords": [
-        "minecraft",
-        "neoforge",
-        "modding",
-        "entity",
-        "npc",
-        "gamedev"
-      ],
-      "skills": [
+        "./minecraft/playtest-loop",
+        "./minecraft/mod-development",
         "./minecraft/npc-design"
       ]
     }

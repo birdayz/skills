@@ -6,7 +6,10 @@ unattended. The recurring problem they solve: the agent can't see a game window,
 and a launch costs ~60s — so naive "edit, launch, ask the human to look" iteration is hopeless.
 These skills replace the human's eyes and hands.
 
-## [minecraft-playtest-loop](playtest-loop/SKILL.md)
+Shipped as a single plugin — **`minecraft`** (`/plugin install minecraft@birdayz-skills`) — bundling the
+three skills below. Each folder under `minecraft/` is one skill, named to match its `SKILL.md`.
+
+## [playtest-loop](playtest-loop/SKILL.md)
 The offscreen foundation the other two build on: unattended visual iteration for mod dev. Render the
 dev client/server on a virtual display nobody sees (Xvfb + `llvmpipe` software GL), drive the game via
 env-gated demo hooks compiled into the mod, gate captures on the MC log, prove gameplay with greppable
@@ -14,7 +17,7 @@ functional asserts, and gate looks with LLM-judge review loops. Bundled tools:
 [`playtest-loop/tools`](playtest-loop/tools/) — `launch-offscreen.sh`, `capture.sh`, and a
 dependency-free Go `keysend` uinput injector.
 
-## [minecraft-mod-development](mod-development/SKILL.md)
+## [mod-development](mod-development/SKILL.md)
 The base loop for NeoForge mod work. Three rules that make agent-driven mod work fast and verifiable:
 
 - **Logic lives in MC-free classes, iterated via JUnit** (seconds), never via game launches.
@@ -31,7 +34,7 @@ the render-pipeline rework, programmatic world-building. Bundled helper:
 uinput keystroke injector for driving a real on-screen game session on Wayland/sway, where no
 display-server input tooling exists.
 
-## [minecraft-npc-design](npc-design/SKILL.md)
+## [npc-design](npc-design/SKILL.md)
 Offline-first custom entity/character pipeline: author geometry as JSON cube models, paint atlases
 procedurally (Go), generate faces with an image model against reference photos, and **iterate in a
 ~1s offline previewer instead of the game**. In-game verification is reduced to one "photo studio"

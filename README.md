@@ -10,9 +10,7 @@ Claude Code skills. Image generation, code review, and Minecraft NeoForge mod de
 /plugin marketplace add birdayz/skills
 /plugin install image-generation@birdayz-skills
 /plugin install codex-review@birdayz-skills
-/plugin install minecraft-playtest-loop@birdayz-skills
-/plugin install minecraft-mod-development@birdayz-skills
-/plugin install minecraft-npc-design@birdayz-skills
+/plugin install minecraft@birdayz-skills
 ```
 
 ### CLI
@@ -21,9 +19,7 @@ Claude Code skills. Image generation, code review, and Minecraft NeoForge mod de
 claude plugin marketplace add https://github.com/birdayz/skills
 claude plugin install image-generation@birdayz-skills
 claude plugin install codex-review@birdayz-skills
-claude plugin install minecraft-playtest-loop@birdayz-skills
-claude plugin install minecraft-mod-development@birdayz-skills
-claude plugin install minecraft-npc-design@birdayz-skills
+claude plugin install minecraft@birdayz-skills
 ```
 
 ## Skills
@@ -54,15 +50,15 @@ The key point: codex is **manual** — no bot or webhook runs it. The skill trig
 
 Requires the `codex` CLI (logged in) and `gh`. See the [SKILL.md](codex-review/SKILL.md) for details.
 
-### Minecraft mod dev (`minecraft-playtest-loop`, `minecraft-mod-development`, `minecraft-npc-design`)
+### minecraft
 
-Agent-driven Minecraft **NeoForge (26.1.x)** mod development — build, verify, and polish a mod end to end with no human watching the screen.
+Agent-driven Minecraft **NeoForge (26.1.x)** mod development — build, verify, and polish a mod end to end with no human watching the screen. One plugin, three skills that work as a set (folder layout = `minecraft/<skill>`):
 
-- **`minecraft-playtest-loop`** — the offscreen foundation the other two build on: render the dev client/server on a virtual display nobody sees, capture pixels the agent `Read`s, drive the game via env-gated demo hooks in the mod, prove behavior with greppable functional asserts, and gate looks with LLM-judge loops. Bundled tools: `launch-offscreen.sh`, `capture.sh`, and a dependency-free Go `keysend` uinput injector. Requires `Xvfb`, `ffmpeg`, ImageMagick, and Mesa software GL (`llvmpipe`).
-- **`minecraft-mod-development`** — scaffold a mod from scratch, the decompiled-API lookup discipline, unit-test-first strategy, headless offscreen capture, driving the live game on Wayland/sway, and a pile of hard-won MC 26.1.x API gotchas.
-- **`minecraft-npc-design`** — offline-first custom-entity pipeline: JSON cube models, procedural atlas painting, a ~1s previewer, a persona-reviewer loop, and an auto-orbit in-game photo studio.
+- **`playtest-loop`** — the offscreen foundation the other two build on: render the dev client/server on a virtual display nobody sees, capture pixels the agent `Read`s, drive the game via env-gated demo hooks in the mod, prove behavior with greppable functional asserts, and gate looks with LLM-judge loops. Bundled tools: `launch-offscreen.sh`, `capture.sh`, and a dependency-free Go `keysend` uinput injector. Requires `Xvfb`, `ffmpeg`, ImageMagick, and Mesa software GL (`llvmpipe`).
+- **`mod-development`** — scaffold a mod from scratch, the decompiled-API lookup discipline, unit-test-first strategy, headless offscreen capture, driving the live game on Wayland/sway, and a pile of hard-won MC 26.1.x API gotchas.
+- **`npc-design`** — offline-first custom-entity pipeline: JSON cube models, procedural atlas painting, a ~1s previewer, a persona-reviewer loop, and an auto-orbit in-game photo studio.
 
-See [minecraft/README.md](minecraft/README.md) and the per-skill SKILL.md files.
+Install all three with `minecraft@birdayz-skills`. See [minecraft/README.md](minecraft/README.md) and the per-skill SKILL.md files.
 
 ## License
 
