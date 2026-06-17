@@ -37,6 +37,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -80,6 +81,13 @@ var (
 	inlineCodeRE = regexp.MustCompile("`[^`]*`")
 )
 
+// worktreePathRE matches an absolute path up to and including a `.claude/worktrees/<name>/`
+// segment. It's the best-effort fallback in stripRepoPaths: a path codex emitted from inside
+// a Claude Code worktree collapses to its repo-relative tail even when the exact work-tree
+// root wasn't computed (symlink-resolved path, a stale toplevel). The `[^\s:]` classes keep
+// a match inside one path token and short of the trailing `:line` suffix.
+var worktreePathRE = regexp.MustCompile(`/[^\s:]*\.claude/worktrees/[^/\s:]+/`)
+
 type config struct {
 	mode      string // "review" | "exec"
 	base      string
@@ -93,6 +101,7 @@ type config struct {
 	pr        string
 	repo      string
 	bypass    bool
+	keepPaths bool
 	skillURL  string
 	dir       string
 	tmplFile  string
@@ -163,6 +172,7 @@ func parseFlags(mode string, args []string) config {
 	fs.StringVar(&cfg.pr, "pr", "", "PR number to post to (default: the current branch's PR)")
 	fs.StringVar(&cfg.repo, "repo", "", "owner/name for gh (default: inferred from cwd)")
 	fs.BoolVar(&cfg.bypass, "bypass-sandbox", false, "use --dangerously-bypass-approvals-and-sandbox instead of -s read-only (REQUIRED inside a nested sandbox/agent where bwrap can't nest; review writes nothing, so no edit risk)")
+	fs.BoolVar(&cfg.keepPaths, "keep-paths", false, "keep codex's absolute file paths in the review (default: rewrite them to repo-relative so a posted comment doesn't leak the local repo/worktree path)")
 	fs.StringVar(&cfg.skillURL, "skill-url", defaultSkillURL, "skill URL for the comment footer")
 	fs.StringVar(&cfg.dir, "dir", "", "scratch dir for review.md/review.log (default: a per-repo+branch tmp dir)")
 	fs.StringVar(&cfg.tmplFile, "template", "", "path to a Go text/template overriding the default PR-comment template")
@@ -325,6 +335,12 @@ func run(ctx context.Context, cfg config) (result, error) {
 	} else {
 		review = strings.TrimSpace(proseCap.String())
 	}
+	// Rewrite codex's absolute paths to repo-relative BEFORE anything consumes the prose
+	// (review.md, verdict, PR comment, stdout echo) so none of them leak the local repo or
+	// worktree path. The full trace in review.log keeps absolute paths — it's local debug.
+	if review != "" && !cfg.keepPaths {
+		review = stripRepoPaths(review, repoRoots())
+	}
 	_ = os.WriteFile(reviewPath, []byte(review), 0o644)
 	// logPath was streamed live via logFile — don't truncate it here.
 
@@ -437,6 +453,56 @@ func classifyVerdict(review string) string {
 	default:
 		return "UNKNOWN (no ACK/NAK verdict line — read the prose)"
 	}
+}
+
+// stripRepoPaths rewrites the absolute file paths in codex's review prose into
+// repo-relative ones. Codex reports each finding with the absolute path of the directory
+// it ran in — e.g. "/home/me/proj/.claude/worktrees/r-14/apps/x.tsx:5". Posting that into
+// a PR comment leaks the reviewer's local filesystem layout (home dir, worktree name) and
+// makes the path un-clickable for everyone else, so we collapse the repo-root prefix and
+// the finding reads "apps/x.tsx:5".
+//
+// roots are the absolute directory prefixes to strip, longest first (caller supplies them;
+// see repoRoots). After the exact prefixes, a best-effort pass collapses any leftover
+// `<…>/.claude/worktrees/<name>/` prefix, catching paths whose exact root wasn't computed
+// (symlink-resolved, stale toplevel).
+func stripRepoPaths(review string, roots []string) string {
+	for _, r := range roots {
+		if r != "" {
+			review = strings.ReplaceAll(review, r+"/", "")
+		}
+	}
+	return worktreePathRE.ReplaceAllString(review, "")
+}
+
+// repoRoots returns the absolute directory prefixes stripRepoPaths should remove, longest
+// first so the most specific match wins. It's the git work-tree root of codex's cwd (which
+// IS the worktree path when the review ran inside one) plus its symlink-resolved form and
+// the cwd, deduped — the set of strings codex could have prefixed a path with.
+func repoRoots() []string {
+	seen := map[string]bool{}
+	var roots []string
+	add := func(p string) {
+		if p == "" || seen[p] {
+			return
+		}
+		seen[p] = true
+		roots = append(roots, p)
+	}
+	if top, err := gitOutput("rev-parse", "--show-toplevel"); err == nil {
+		add(top)
+		if real, err := filepath.EvalSymlinks(top); err == nil {
+			add(real)
+		}
+	}
+	if cwd, err := os.Getwd(); err == nil {
+		add(cwd)
+		if real, err := filepath.EvalSymlinks(cwd); err == nil {
+			add(real)
+		}
+	}
+	sort.Slice(roots, func(i, j int) bool { return len(roots[i]) > len(roots[j]) })
+	return roots
 }
 
 func postComment(ctx context.Context, cfg config, res result) (string, error) {
