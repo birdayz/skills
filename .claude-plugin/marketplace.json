@@ -58,6 +58,22 @@
         "./minecraft/mod-development",
         "./minecraft/npc-design"
       ]
+    },
+    {
+      "name": "suicide",
+      "description": "Self-terminate the running agent on Sway — close its terminal window and kill its process (only on an explicit request)",
+      "source": "./",
+      "category": "developer-tools",
+      "keywords": [
+        "sway",
+        "swaymsg",
+        "self-terminate",
+        "kill",
+        "wlroots"
+      ],
+      "skills": [
+        "./suicide"
+      ]
     }
   ]
 }
