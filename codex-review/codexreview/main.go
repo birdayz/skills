@@ -163,8 +163,8 @@ func parseFlags(mode string, args []string) config {
 	case "exec":
 		fs.StringVar(&cfg.prompt, "prompt", "", "the steering prompt (required)")
 	}
-	fs.StringVar(&cfg.model, "model", env("CODEX_REVIEW_MODEL", "gpt-5.5"), "codex model (-m)")
-	fs.StringVar(&cfg.effort, "effort", env("CODEX_REVIEW_REASONING_EFFORT", "xhigh"), "reasoning effort (-c model_reasoning_effort=)")
+	fs.StringVar(&cfg.model, "model", env("CODEX_REVIEW_MODEL", "gpt-5.6-sol"), "codex model (-m)")
+	fs.StringVar(&cfg.effort, "effort", env("CODEX_REVIEW_REASONING_EFFORT", "ultra"), "reasoning effort (-c model_reasoning_effort=)")
 	fs.DurationVar(&cfg.timeout, "timeout", 25*time.Minute, "hard wall-clock cap; the run is killed (process group) if exceeded")
 	fs.BoolVar(&cfg.post, "post", false, "post the review as a PR comment via gh")
 	fs.BoolVar(&cfg.supersede, "supersede", false, "with --post: post a NEW comment and COLLAPSE this tool's prior comments on the PR as 'outdated' (re-reviews keep one active comment + a folded history, no edit-in-place, no spam)")
@@ -200,8 +200,8 @@ usage:
 
 common flags (full list: `+"`codexreview review -h`"+` / `+"`codexreview exec -h`"+`):
   --post                post the result as a PR comment via gh (--supersede collapses prior ones)
-  --model   gpt-5.5     codex model           (env CODEX_REVIEW_MODEL)
-  --effort  xhigh       reasoning effort      (env CODEX_REVIEW_REASONING_EFFORT)
+  --model   gpt-5.6-sol codex model           (env CODEX_REVIEW_MODEL)
+  --effort  ultra       reasoning effort      (env CODEX_REVIEW_REASONING_EFFORT)
   --timeout 25m         hard cap; a stuck run is process-group-killed (no external `+"`timeout`"+` needed)
   --heartbeat 15s       stderr progress line (elapsed · tokens · turns/tool-calls · activity); 0 disables
   -v/--verbose          stream codex's full live trace to stderr (async runs only)
